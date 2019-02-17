@@ -1,4 +1,5 @@
-﻿using NBitcoin.DataEncoders;
+﻿#if !NOJSONNET
+using NBitcoin.DataEncoders;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -13,22 +14,19 @@ namespace NBitcoin.RPC
 	{
 		protected override void BuildTransaction(JObject json, Transaction tx)
 		{
-			var hash = new uint256((string)json.GetValue("hash"));
 			tx.Version = (uint)json.GetValue("ver");
 			tx.LockTime = (uint)json.GetValue("lock_time");
-			var size = (uint)json.GetValue("size");
-
 
 			var vin = (JArray)json.GetValue("in");
 			int vinCount = (int)json.GetValue("vin_sz");
-			for(int i = 0 ; i < vinCount ; i++)
+			for(int i = 0; i < vinCount; i++)
 			{
 				var jsonIn = (JObject)vin[i];
-				var txin = new NBitcoin.TxIn();
+				var txin = new TxIn();
 				tx.Inputs.Add(txin);
 				var prevout = (JObject)jsonIn.GetValue("prev_out");
 
-				txin.PrevOut.Hash = new uint256((string)prevout.GetValue("hash"));
+				txin.PrevOut.Hash = uint256.Parse((string)prevout.GetValue("hash"));
 				txin.PrevOut.N = (uint)prevout.GetValue("n");
 
 
@@ -52,7 +50,7 @@ namespace NBitcoin.RPC
 
 			var vout = (JArray)json.GetValue("out");
 			int voutCount = (int)json.GetValue("vout_sz");
-			for(int i = 0 ; i < voutCount ; i++)
+			for(int i = 0; i < voutCount; i++)
 			{
 				var jsonOut = (JObject)vout[i];
 				var txout = new NBitcoin.TxOut();
@@ -77,8 +75,9 @@ namespace NBitcoin.RPC
 
 			writer.WritePropertyName("in");
 			writer.WriteStartArray();
-			foreach(var txin in tx.Inputs)
+			foreach(var input in tx.Inputs.AsIndexedInputs())
 			{
+				var txin = input.TxIn;
 				writer.WriteStartObject();
 				writer.WritePropertyName("prev_out");
 				writer.WriteStartObject();
@@ -86,24 +85,28 @@ namespace NBitcoin.RPC
 				WritePropertyValue(writer, "n", txin.PrevOut.N);
 				writer.WriteEndObject();
 
-				if(txin.PrevOut.Hash == new uint256(0))
+				if(txin.PrevOut.Hash == uint256.Zero)
 				{
-					WritePropertyValue(writer, "coinbase", Encoders.Hex.EncodeData(txin.ScriptSig.ToRawScript()));
+					WritePropertyValue(writer, "coinbase", Encoders.Hex.EncodeData(txin.ScriptSig.ToBytes()));
 				}
 				else
 				{
 					WritePropertyValue(writer, "scriptSig", txin.ScriptSig.ToString());
 				}
+				if(input.WitScript != WitScript.Empty)
+				{
+					WritePropertyValue(writer, "witness", input.WitScript.ToString());
+				}
 				if(txin.Sequence != uint.MaxValue)
 				{
-					WritePropertyValue(writer, "sequence", txin.Sequence);
+					WritePropertyValue(writer, "sequence", (uint)txin.Sequence);
 				}
 				writer.WriteEndObject();
 			}
 			writer.WriteEndArray();
 			writer.WritePropertyName("out");
 			writer.WriteStartArray();
-			
+
 			foreach(var txout in tx.Outputs)
 			{
 				writer.WriteStartObject();
@@ -117,3 +120,4 @@ namespace NBitcoin.RPC
 
 	}
 }
+#endif

@@ -1,13 +1,54 @@
-﻿using NBitcoin.DataEncoders;
+﻿#if !NOSOCKET
+using NBitcoin.DataEncoders;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using System.Reflection;
+
+#if WINDOWS_UWP
+using Windows.ApplicationModel;
+#endif
 
 namespace NBitcoin.Protocol
 {
+	[Flags]
+	public enum NodeServices : ulong
+	{
+		Nothing = 0,
+		/// <summary>
+		/// NODE_NETWORK means that the node is capable of serving the block chain. It is currently
+		/// set by all Bitcoin Core nodes, and is unset by SPV clients or other peers that just want
+		/// network services but don't provide them.
+		/// </summary>
+		Network = (1 << 0),
+
+		/// <summary>
+		///  NODE_GETUTXO means the node is capable of responding to the getutxo protocol request.
+		/// Bitcoin Core does not support this but a patch set called Bitcoin XT does.
+		/// See BIP 64 for details on how this is implemented.
+		/// </summary>
+		GetUTXO = (1 << 1),
+
+		/// <summary> NODE_BLOOM means the node is capable and willing to handle bloom-filtered connections.
+		/// Bitcoin Core nodes used to support this by default, without advertising this bit,
+		/// but no longer do as of protocol version 70011 (= NO_BLOOM_VERSION)
+		/// </summary>
+		NODE_BLOOM = (1 << 2),
+
+		/// <summary> Indicates that a node can be asked for blocks and transactions including
+		/// witness data. 
+		/// </summary> 
+		NODE_WITNESS = (1 << 3),
+
+		/// <summary> NODE_NETWORK_LIMITED means the same as NODE_NETWORK with the limitation of only
+		/// serving the last 288 (2 day) blocks
+		/// See BIP159 for details on how this is implemented.
+		/// </summary> 
+		NODE_NETWORK_LIMITED = (1 << 10)
+	}
 	[Payload("version")]
 	public class VersionPayload : Payload, IBitcoinSerializable
 	{
@@ -16,29 +57,50 @@ namespace NBitcoin.Protocol
 		{
 			if(_NUserAgent == null)
 			{
+#if WINDOWS_UWP
+				// get the app version
+				Package package = Package.Current;
+				var version = package.Id.Version;
+				_NUserAgent = "/NBitcoin:" + version.Major + "." + version.Minor + "." + version.Build + "/";
+#else
+#if !NETSTANDARD1X
 				var version = typeof(VersionPayload).Assembly.GetName().Version;
-				_NUserAgent = "/NBitcoin:" + version.Major + "." + version.MajorRevision + "." + version.Minor + "/";
+#else
+				var version = typeof(VersionPayload).GetTypeInfo().Assembly.GetName().Version;
+#endif
+				_NUserAgent = "/NBitcoin:" + version.Major + "." + version.MajorRevision + "." + version.Build + "/";
+#endif
+
 			}
 			return _NUserAgent;
 		}
 		uint version;
 
-		public ProtocolVersion Version
+		public uint Version
 		{
 			get
 			{
-				if(version == 10300) //A version number of 10300 is converted to 300 before being processed
-					return (ProtocolVersion)(300);  //https://en.bitcoin.it/wiki/Version_Handshake
-				return (ProtocolVersion)version;
+				return version;
 			}
 			set
 			{
-				if(value == (ProtocolVersion)10300)
-					value = (ProtocolVersion)300;
-				version = (uint)value;
+				version = value;
 			}
 		}
 		ulong services;
+
+		public NodeServices Services
+		{
+			get
+			{
+				return (NodeServices)services;
+			}
+			set
+			{
+				services = (ulong)value;
+			}
+		}
+
 		long timestamp;
 
 		public DateTimeOffset Timestamp
@@ -52,8 +114,9 @@ namespace NBitcoin.Protocol
 				timestamp = Utils.DateTimeToUnixTime(value);
 			}
 		}
+
 		NetworkAddress addr_recv = new NetworkAddress();
-		public IPEndPoint AddressReciever
+		public IPEndPoint AddressReceiver
 		{
 			get
 			{
@@ -64,7 +127,6 @@ namespace NBitcoin.Protocol
 				addr_recv.Endpoint = value;
 			}
 		}
-
 		NetworkAddress addr_from = new NetworkAddress();
 		public IPEndPoint AddressFrom
 		{
@@ -77,6 +139,7 @@ namespace NBitcoin.Protocol
 				addr_from.Endpoint = value;
 			}
 		}
+
 		ulong nonce;
 		public ulong Nonce
 		{
@@ -134,23 +197,23 @@ namespace NBitcoin.Protocol
 		public override void ReadWriteCore(BitcoinStream stream)
 		{
 			stream.ReadWrite(ref version);
-			using(stream.ProtocolVersionScope((ProtocolVersion)version))
+			using(stream.ProtocolVersionScope(version))
 			{
 				stream.ReadWrite(ref services);
 				stream.ReadWrite(ref timestamp);
-				using(stream.ProtocolVersionScope(ProtocolVersion.CADDR_TIME_VERSION - 1)) //No time field in version message
+				using(stream.SerializationTypeScope(SerializationType.Hash)) //No time field in version message
 				{
 					stream.ReadWrite(ref addr_recv);
 				}
 				if(version >= 106)
 				{
-					using(stream.ProtocolVersionScope(ProtocolVersion.CADDR_TIME_VERSION - 1)) //No time field in version message
+					using(stream.SerializationTypeScope(SerializationType.Hash)) //No time field in version message
 					{
 						stream.ReadWrite(ref addr_from);
 					}
 					stream.ReadWrite(ref nonce);
 					stream.ReadWrite(ref user_agent);
-					if(version < 60002)
+					if(!stream.ProtocolCapabilities.SupportUserAgent)
 						if(user_agent.Length != 0)
 							throw new FormatException("Should not find user agent for current version " + version);
 					stream.ReadWrite(ref start_height);
@@ -169,3 +232,4 @@ namespace NBitcoin.Protocol
 		}
 	}
 }
+#endif

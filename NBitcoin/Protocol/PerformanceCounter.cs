@@ -9,11 +9,11 @@ namespace NBitcoin
 {
 	public class PerformanceSnapshot
 	{
-		
+
 		public PerformanceSnapshot(long readen, long written)
 		{
 			_TotalWrittenBytes = written;
-			_TotalReadenBytes = readen;	
+			_TotalReadenBytes = readen;
 		}
 		private readonly long _TotalWrittenBytes;
 		public long TotalWrittenBytes
@@ -136,8 +136,10 @@ namespace NBitcoin
 
 		public PerformanceSnapshot Snapshot()
 		{
+#if !NETSTANDARD1X
 			Thread.MemoryBarrier();
-			var snap = new PerformanceSnapshot(ReadenBytes,WrittenBytes)
+#endif
+			var snap = new PerformanceSnapshot(ReadenBytes, WrittenBytes)
 			{
 				Start = Start,
 				Taken = DateTime.UtcNow

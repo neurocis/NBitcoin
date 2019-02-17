@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -10,8 +11,21 @@ namespace NBitcoin.OpenAsset
 	{
 		public static ColoredTransaction GetColoredTransaction(this Transaction tx, IColoredTransactionRepository repo)
 		{
-			return ColoredTransaction.FetchColors(tx, repo);
+			return tx.GetColoredTransactionAsync(repo).GetAwaiter().GetResult();
 		}
+
+		public static async Task<ColoredTransaction> GetColoredTransactionAsync(this Transaction tx, IColoredTransactionRepository repo)
+		{
+			try
+			{
+				return await ColoredTransaction.FetchColorsAsync(tx, repo).ConfigureAwait(false);
+			}
+			catch(TransactionNotFoundException)
+			{
+				return null;
+			}
+		}
+
 		public static ColorMarker GetColoredMarker(this Transaction tx)
 		{
 			return ColorMarker.Get(tx);

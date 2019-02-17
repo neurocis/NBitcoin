@@ -1,17 +1,14 @@
-﻿using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+﻿#if !NOJSONNET
 using System;
-using System.Collections.Generic;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace NBitcoin.RPC
 {
 	abstract class RawFormatter
 	{
-		public RawFormatter()
+		protected RawFormatter()
 		{
 			Network = Network.Main;
 		}
@@ -20,12 +17,22 @@ namespace NBitcoin.RPC
 			get;
 			set;
 		}
+
+		[Obsolete("Do not parse JSON")]
+		public Transaction ParseJson(string str)
+		{
+			JObject obj = JObject.Parse(str);
+			return Parse(obj);
+		}
+
+		[Obsolete("Use RawFormatter.ParseJson method instead")]
 		public Transaction Parse(string str)
 		{
 			JObject obj = JObject.Parse(str);
 			return Parse(obj);
 		}
 
+		[Obsolete("Do not parse JSON")]
 		public Transaction Parse(JObject obj)
 		{
 			Transaction tx = new Transaction();
@@ -55,3 +62,4 @@ namespace NBitcoin.RPC
 		protected abstract void WriteTransaction(JsonTextWriter writer, Transaction tx);
 	}
 }
+#endif

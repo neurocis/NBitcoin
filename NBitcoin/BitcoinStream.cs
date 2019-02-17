@@ -1,15 +1,26 @@
-﻿using System;
+﻿using NBitcoin.Protocol;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+#if !NOSOCKET
 using System.Net.Sockets;
+#endif
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
+
+
 namespace NBitcoin
 {
+	public enum SerializationType
+	{
+		Disk,
+		Network,
+		Hash
+	}
 	public class Scope : IDisposable
 	{
 		Action close;
@@ -19,14 +30,14 @@ namespace NBitcoin
 			open();
 		}
 
-		#region IDisposable Members
+#region IDisposable Members
 
 		public void Dispose()
 		{
 			close();
 		}
 
-		#endregion
+#endregion
 
 		public static IDisposable Nothing
 		{
@@ -42,7 +53,7 @@ namespace NBitcoin
 	}
 	public partial class BitcoinStream
 	{
-		int _MaxArraySize = Int32.MaxValue;
+		int _MaxArraySize = 1024 * 1024;
 		public int MaxArraySize
 		{
 			get
@@ -56,20 +67,22 @@ namespace NBitcoin
 		}
 
 		//ReadWrite<T>(ref T data)
-		static MethodInfo _ReadWriteTyped;
+		internal static MethodInfo _ReadWriteTyped;
 		static BitcoinStream()
 		{
-			_ReadWriteTyped =
-				typeof(BitcoinStream)
-				.GetMethods()
-				.Where(m => m.Name == "ReadWrite")
-				.Where(m => m.IsGenericMethodDefinition)
-				.Where(m => m.GetParameters().Length == 1)
-				.Where(m => m.GetParameters().Any(p => p.ParameterType.IsByRef))
-				.First();
-
+			_ReadWriteTyped = typeof(BitcoinStream)
+			.GetTypeInfo()
+			.DeclaredMethods
+			.Where(m => m.Name == "ReadWrite")
+			.Where(m => m.IsGenericMethodDefinition)
+			.Where(m => m.GetParameters().Length == 1)
+			.Where(m => m.GetParameters().Any(p => p.ParameterType.IsByRef && p.ParameterType.HasElementType && !p.ParameterType.GetElementType().IsArray))
+			.First();
 		}
 
+#if !NOSOCKET
+		private readonly bool _IsNetworkStream;
+#endif
 		private readonly Stream _Inner;
 		public Stream Inner
 		{
@@ -90,6 +103,9 @@ namespace NBitcoin
 		public BitcoinStream(Stream inner, bool serializing)
 		{
 			_Serializing = serializing;
+#if !NOSOCKET
+			_IsNetworkStream = inner is NetworkStream;
+#endif
 			_Inner = inner;
 		}
 
@@ -102,15 +118,15 @@ namespace NBitcoin
 		{
 			if(Serializing)
 			{
-				var bytes = data == null ? Script.Empty.ToRawScript(true) : data.ToRawScript(true);
+				var bytes = data == null ? Script.Empty.ToBytes(true) : data.ToBytes(true);
 				ReadWriteAsVarString(ref bytes);
 				return data;
 			}
 			else
 			{
-				var varString = new VarString();
-				varString.ReadWrite(this);
-				return new Script(varString.GetString());
+				byte[] bytes = null;
+				VarString.StaticRead(this, ref bytes);
+				return Script.FromBytesUnsafe(bytes);
 			}
 		}
 
@@ -128,11 +144,36 @@ namespace NBitcoin
 			return data;
 		}
 
+
+		ConsensusFactory _ConsensusFactory = Consensus.Main.ConsensusFactory;
+
+		/// <summary>
+		/// Set the format to use when serializing and deserializing consensus related types.
+		/// </summary>
+		public ConsensusFactory ConsensusFactory
+		{
+			get
+			{
+				return _ConsensusFactory;
+			}
+			set
+			{
+				if(value == null)
+					throw new ArgumentNullException(nameof(value));
+				_ConsensusFactory = value;
+			}
+		}
+
 		public void ReadWriteAsVarString(ref byte[] bytes)
 		{
-			VarString str = new VarString(bytes);
-			ReadWrite(ref str);
-			bytes = str.GetString(true);
+			if(Serializing)
+			{
+				VarString.StaticWrite(this, bytes);
+			}
+			else
+			{
+				VarString.StaticRead(this, ref bytes);
+			}
 		}
 
 		public void ReadWrite(Type type, ref object obj)
@@ -170,12 +211,19 @@ namespace NBitcoin
 		{
 			data.ReadWrite(this);
 		}
+		public void ReadWriteStruct<T>(T data) where T : struct, IBitcoinSerializable
+		{
+			data.ReadWrite(this);
+		}
 
 		public void ReadWrite<T>(ref T data) where T : IBitcoinSerializable
 		{
 			var obj = data;
 			if(obj == null)
-				obj = Activator.CreateInstance<T>();
+			{
+				if(!ConsensusFactory.TryCreateNew<T>(out obj))
+					obj = Activator.CreateInstance<T>();
+			}
 			obj.ReadWrite(this);
 			if(!Serializing)
 				data = obj;
@@ -194,8 +242,8 @@ namespace NBitcoin
 		}
 
 		private void ReadWriteList<TList, TItem>(ref TList data)
-				where TList : List<TItem>, new()
-				where TItem : IBitcoinSerializable, new()
+			where TList : List<TItem>, new()
+			where TItem : IBitcoinSerializable, new()
 		{
 			var dataArray = data == null ? null : data.ToArray();
 			if(Serializing && dataArray == null)
@@ -217,6 +265,16 @@ namespace NBitcoin
 		{
 			ReadWriteBytes(ref arr);
 		}
+#if HAS_SPAN
+		public void ReadWrite(ref Span<byte> arr)
+		{
+			ReadWriteBytes(arr);
+		}
+#endif
+		public void ReadWrite(ref byte[] arr, int offset, int count)
+		{
+			ReadWriteBytes(ref arr, offset, count);
+		}
 		public void ReadWrite<T>(ref T[] arr) where T : IBitcoinSerializable, new()
 		{
 			ReadWriteArray<T>(ref arr);
@@ -229,11 +287,43 @@ namespace NBitcoin
 			value = unchecked((long)uvalue);
 		}
 
+#if HAS_SPAN
 		private void ReadWriteNumber(ref ulong value, int size)
+		{
+			if(_IsNetworkStream && ReadCancellationToken.CanBeCanceled)
+			{
+				ReadWriteNumberInefficient(ref value, size);
+				return;
+			}
+			Span<byte> bytes = stackalloc byte[size];
+			for(int i = 0; i < size; i++)
+			{
+				bytes[i] = (byte)(value >> i * 8);
+			}
+			if(IsBigEndian)
+				bytes.Reverse();
+			ReadWriteBytes(bytes);
+			if(IsBigEndian)
+				bytes.Reverse();
+			ulong valueTemp = 0;
+			for(int i = 0; i < bytes.Length; i++)
+			{
+				var v = (ulong)bytes[i];
+				valueTemp += v << (i * 8);
+			}
+			value = valueTemp;
+		}
+#endif
+
+#if !HAS_SPAN
+		private void ReadWriteNumber(ref ulong value, int size)
+#else
+		private void ReadWriteNumberInefficient(ref ulong value, int size)
+#endif
 		{
 			var bytes = new byte[size];
 
-			for(int i = 0 ; i < size ; i++)
+			for(int i = 0; i < size; i++)
 			{
 				bytes[i] = (byte)(value >> i * 8);
 			}
@@ -243,7 +333,7 @@ namespace NBitcoin
 			if(IsBigEndian)
 				Array.Reverse(bytes);
 			ulong valueTemp = 0;
-			for(int i = 0 ; i < bytes.Length ; i++)
+			for(int i = 0; i < bytes.Length; i++)
 			{
 				var v = (ulong)bytes[i];
 				valueTemp += v << (i * 8);
@@ -251,22 +341,64 @@ namespace NBitcoin
 			value = valueTemp;
 		}
 
-		private void ReadWriteBytes(ref byte[] data)
+#if HAS_SPAN
+		private void ReadWriteBytes(ref byte[] data, int offset = 0, int count = -1)
+		{
+			if(data == null)
+				throw new ArgumentNullException(nameof(data));
+			if(data.Length == 0)
+				return;
+			count = count == -1 ? data.Length : count;
+			if(count == 0)
+				return;
+			ReadWriteBytes(new Span<byte>(data, offset, count));
+		}
+
+		private void ReadWriteBytes(Span<byte> data)
 		{
 			if(Serializing)
 			{
-				Inner.Write(data, 0, data.Length);
+				Inner.Write(data);
 				Counter.AddWritten(data.Length);
 			}
 			else
 			{
-				var readen = Inner.ReadEx(data, 0, data.Length, ReadCancellationToken);
-				if(readen == -1)
+				var readen = Inner.ReadEx(data, ReadCancellationToken);
+				if(readen == 0)
 					throw new EndOfStreamException("No more byte to read");
 				Counter.AddReaden(readen);
 
 			}
 		}
+#else
+		private void ReadWriteBytes(ref byte[] data, int offset = 0, int count = -1)
+		{
+			if(data == null)
+				throw new ArgumentNullException(nameof(data));
+
+			if(data.Length == 0)
+				return;
+
+			count = count == -1 ? data.Length : count;
+
+			if(count == 0)
+				return;
+
+			if(Serializing)
+			{
+				Inner.Write(data, offset, count);
+				Counter.AddWritten(count);
+			}
+			else
+			{
+				var readen = Inner.ReadEx(data, offset, count, ReadCancellationToken);
+				if(readen == 0)
+					throw new EndOfStreamException("No more byte to read");
+				Counter.AddReaden(readen);
+
+			}
+		}
+#endif
 		private PerformanceCounter _Counter;
 		public PerformanceCounter Counter
 		{
@@ -313,8 +445,9 @@ namespace NBitcoin
 			});
 		}
 
-		ProtocolVersion _ProtocolVersion = ProtocolVersion.PROTOCOL_VERSION;
-		public ProtocolVersion ProtocolVersion
+#pragma warning disable CS0618 // Type or member is obsolete
+		uint? _ProtocolVersion = null;
+		public uint? ProtocolVersion
 		{
 			get
 			{
@@ -323,11 +456,42 @@ namespace NBitcoin
 			set
 			{
 				_ProtocolVersion = value;
+				_ProtocolCapabilities = null;
 			}
 		}
 
 
-		public IDisposable ProtocolVersionScope(ProtocolVersion version)
+		ProtocolCapabilities _ProtocolCapabilities;
+		public ProtocolCapabilities ProtocolCapabilities
+		{
+			get
+			{
+				var capabilities = _ProtocolCapabilities;
+				if(capabilities == null)
+				{
+					capabilities = ProtocolVersion == null ? ProtocolCapabilities.CreateSupportAll() : ConsensusFactory.GetProtocolCapabilities(ProtocolVersion.Value);
+					_ProtocolCapabilities = capabilities;
+				}
+				return capabilities;
+			}
+		}
+#pragma warning restore CS0618 // Type or member is obsolete
+
+		TransactionOptions _TransactionSupportedOptions = TransactionOptions.All;
+		public TransactionOptions TransactionOptions
+		{
+			get
+			{
+				return _TransactionSupportedOptions;
+			}
+			set
+			{
+				_TransactionSupportedOptions = value;
+			}
+		}
+
+
+		public IDisposable ProtocolVersionScope(uint? version)
 		{
 			var old = ProtocolVersion;
 			return new Scope(() =>
@@ -340,31 +504,46 @@ namespace NBitcoin
 			});
 		}
 
-		public void CopyParameters(BitcoinStream stream)
+		public void CopyParameters(BitcoinStream from)
 		{
-			ProtocolVersion = stream.ProtocolVersion;
-			IsBigEndian = stream.IsBigEndian;
-			MaxArraySize = stream.MaxArraySize;
+			if(from == null)
+				throw new ArgumentNullException(nameof(from));
+			ProtocolVersion = from.ProtocolVersion;
+			ConsensusFactory = from.ConsensusFactory;
+			_ProtocolCapabilities = from._ProtocolCapabilities;
+			IsBigEndian = from.IsBigEndian;
+			MaxArraySize = from.MaxArraySize;
+			Type = from.Type;
 		}
 
-		private bool _NetworkFormat;
-		public bool NetworkFormat
+
+		public SerializationType Type
 		{
-			get
-			{
-				return _NetworkFormat;
-			}
+			get;
+			set;
 		}
 
-		public IDisposable NetworkFormatScope(bool value)
+		public IDisposable SerializationTypeScope(SerializationType value)
 		{
-			var old = _NetworkFormat;
+			var old = Type;
 			return new Scope(() =>
 			{
-				_NetworkFormat = value;
+				Type = value;
 			}, () =>
 			{
-				_NetworkFormat = old;
+				Type = old;
+			});
+		}
+
+		public IDisposable ConsensusFactoryScope(ConsensusFactory consensusFactory)
+		{
+			var old = ConsensusFactory;
+			return new Scope(() =>
+			{
+				ConsensusFactory = consensusFactory;
+			}, () =>
+			{
+				ConsensusFactory = old;
 			});
 		}
 
@@ -376,17 +555,17 @@ namespace NBitcoin
 
 		public void ReadWriteAsVarInt(ref uint val)
 		{
-			ulong vallong = val;
-			ReadWriteAsVarInt(ref vallong);
-			if(!Serializing)
-				val = (uint)vallong;
+			if(Serializing)
+				VarInt.StaticWrite(this, val);
+			else
+				val = (uint)Math.Min(uint.MaxValue, VarInt.StaticRead(this));
 		}
 		public void ReadWriteAsVarInt(ref ulong val)
 		{
-			var value = new VarInt(val);
-			ReadWrite(ref value);
-			if(!Serializing)
-				val = value.ToLong();
+			if(Serializing)
+				VarInt.StaticWrite(this, val);
+			else
+				val = VarInt.StaticRead(this);
 		}
 
 		public void ReadWriteAsCompactVarInt(ref uint val)

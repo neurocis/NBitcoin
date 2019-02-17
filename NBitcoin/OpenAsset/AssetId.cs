@@ -7,33 +7,50 @@ using System.Threading.Tasks;
 
 namespace NBitcoin.OpenAsset
 {
+	/// <summary>
+	/// A unique Id for an asset
+	/// </summary>
 	public class AssetId
 	{
-		byte[] _Bytes;
+		internal byte[] _Bytes;
 
 		public AssetId()
 		{
 			_Bytes = new byte[] { 0 };
 		}
 
-		public AssetId(BitcoinSecret assetIssuanceKey)
-			: this(assetIssuanceKey.GetAddress())
+		public AssetId(IDestination assetScriptPubKey)
+			: this(assetScriptPubKey.ScriptPubKey)
 		{
+			if(assetScriptPubKey == null)
+				throw new ArgumentNullException(nameof(assetScriptPubKey));
 		}
 
-		public AssetId(BitcoinAddress assetIssuanceKeyAddress)
-			: this(assetIssuanceKeyAddress.ID.CreateScriptPubKey().ID)
+		public AssetId(BitcoinAssetId assetId)
 		{
+			if(assetId == null)
+				throw new ArgumentNullException(nameof(assetId));
+			_Bytes = assetId.AssetId._Bytes;
+		}
+
+		public AssetId(Script assetScriptPubKey)
+			: this(assetScriptPubKey.Hash)
+		{
+			if(assetScriptPubKey == null)
+				throw new ArgumentNullException(nameof(assetScriptPubKey));
 		}
 
 		public AssetId(ScriptId scriptId)
 		{
+			if(scriptId == null)
+				throw new ArgumentNullException(nameof(scriptId));
 			_Bytes = scriptId.ToBytes(true);
 		}
+
 		public AssetId(byte[] value)
 		{
 			if(value == null)
-				throw new ArgumentNullException("value");
+				throw new ArgumentNullException(nameof(value));
 			_Bytes = value;
 		}
 		public AssetId(uint160 value)
@@ -49,7 +66,9 @@ namespace NBitcoin.OpenAsset
 
 		public BitcoinAssetId GetWif(Network network)
 		{
-			return new BitcoinAssetId(_Bytes, network);
+			if(network == null)
+				throw new ArgumentNullException(nameof(network));
+			return new BitcoinAssetId(this, network);
 		}
 
 		public byte[] ToBytes()
@@ -97,6 +116,13 @@ namespace NBitcoin.OpenAsset
 			if(_Str == null)
 				_Str = Encoders.Hex.EncodeData(_Bytes);
 			return _Str;
+		}
+
+		public string ToString(Network network)
+		{
+			if(network == null)
+				throw new ArgumentNullException(nameof(network));
+			return new BitcoinAssetId(this, network).ToString();
 		}
 	}
 }

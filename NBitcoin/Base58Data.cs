@@ -1,13 +1,26 @@
 ﻿using NBitcoin.DataEncoders;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace NBitcoin
 {
-	public abstract class Base58Data
+
+	public interface IBase58Data : IBitcoinString
+	{
+		Base58Type Type
+		{
+			get;
+		}
+	}
+
+	/// <summary>
+	/// Base class for all Base58 check representation of data
+	/// </summary>
+	public abstract class Base58Data : IBase58Data
 	{
 		protected byte[] vchData = new byte[0];
 		protected byte[] vchVersion = new byte[0];
@@ -21,43 +34,55 @@ namespace NBitcoin
 			}
 		}
 
-		public Base58Data(string base64, Network expectedNetwork = null)
+		protected void Init<T>(string base64, Network expectedNetwork = null) where T : Base58Data
 		{
 			_Network = expectedNetwork;
-			SetString(base64);
+			SetString<T>(base64);
 		}
-		public Base58Data(byte[] rawBytes, Network network)
+
+		protected Base58Data(byte[] rawBytes, Network network)
 		{
 			if(network == null)
-				throw new ArgumentNullException("network");
+				throw new ArgumentNullException(nameof(network));
 			_Network = network;
 			SetData(rawBytes);
 		}
-
-		public static Base58Data GetFromBase58Data(string base58)
+		public Base58Data()
 		{
-			return Network.CreateFromBase58Data(base58);
-		}
 
-		private void SetString(string psz)
+		}
+		private void SetString<T>(string psz) where T : Base58Data
 		{
 			if(_Network == null)
 			{
-				_Network = Network.GetNetworkFromBase58Data(psz);
+				_Network = Network.GetNetworkFromBase58Data(psz, Type);
 				if(_Network == null)
 					throw new FormatException("Invalid " + this.GetType().Name);
 			}
 
-			byte[] vchTemp = Encoders.Base58Check.DecodeData(psz);
-			var expectedVersion = _Network.GetVersionBytes(Type);
+			byte[] vchTemp = _Network.NetworkStringParser.GetBase58CheckEncoder().DecodeData(psz);
+			var expectedVersion = _Network.GetVersionBytes(Type, true);
 
 
-			vchVersion = vchTemp.Take((int)expectedVersion.Length).ToArray();
+			vchVersion = vchTemp.SafeSubarray(0, expectedVersion.Length);
 			if(!Utils.ArrayEqual(vchVersion, expectedVersion))
-				throw new FormatException("The version prefix does not match the expected one " + String.Join(",", expectedVersion));
-
-			vchData = vchTemp.Skip((int)expectedVersion.Length).ToArray();
-			wifData = psz;
+			{
+				if(_Network.NetworkStringParser.TryParse(psz, Network, out T other))
+				{
+					this.vchVersion = other.vchVersion;
+					this.vchData = other.vchData;
+					this.wifData = other.wifData;
+				}
+				else
+				{
+					throw new FormatException("The version prefix does not match the expected one " + String.Join(",", expectedVersion));
+				}
+			}
+			else
+			{
+				vchData = vchTemp.SafeSubarray(expectedVersion.Length);
+				wifData = psz;
+			}
 
 			if(!IsValid)
 				throw new FormatException("Invalid " + this.GetType().Name);
@@ -68,8 +93,8 @@ namespace NBitcoin
 		private void SetData(byte[] vchData)
 		{
 			this.vchData = vchData;
-			this.vchVersion = _Network.GetVersionBytes(Type);
-			wifData = Encoders.Base58Check.EncodeData(vchVersion.Concat(vchData).ToArray());
+			this.vchVersion = _Network.GetVersionBytes(Type, true);
+			wifData = _Network.NetworkStringParser.GetBase58CheckEncoder().EncodeData(vchVersion.Concat(vchData).ToArray());
 
 			if(!IsValid)
 				throw new FormatException("Invalid " + this.GetType().Name);

@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NOSOCKET
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -38,19 +39,25 @@ namespace NBitcoin.Protocol
 		public TPayload ReceivePayload<TPayload>(CancellationToken cancellationToken = default(CancellationToken))
 			where TPayload : Payload
 		{
+			if(!Node.IsConnected)
+				throw new InvalidOperationException("The node is not in a connected state");
 			Queue<IncomingMessage> pushedAside = new Queue<IncomingMessage>();
 			try
 			{
-				while(true)
+				using(var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Node._Connection.Cancel.Token))
 				{
-					var message = RecieveMessage(CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Node._Connection.Cancel.Token).Token);
-					if(_Predicates.All(p => p(message)))
+					while(true)
 					{
-						if(message.Message.Payload is TPayload)
-							return (TPayload)message.Message.Payload;
-						else
+						var message = ReceiveMessage(cts.Token);
+						if(_Predicates.All(p => p(message)))
 						{
-							pushedAside.Enqueue(message);
+							if(message.Message.Payload is TPayload)
+								return (TPayload)message.Message.Payload;
+							else
+							{
+								pushedAside.Enqueue(message);
+							}
+
 						}
 					}
 				}
@@ -58,7 +65,7 @@ namespace NBitcoin.Protocol
 			catch(OperationCanceledException)
 			{
 				if(Node._Connection.Cancel.IsCancellationRequested)
-					throw new InvalidOperationException("Connection dropped");
+					throw new InvalidOperationException("The node is not in a connected state");
 				throw;
 			}
 			finally
@@ -66,7 +73,6 @@ namespace NBitcoin.Protocol
 				while(pushedAside.Count != 0)
 					PushMessage(pushedAside.Dequeue());
 			}
-			throw new InvalidProgramException("Bug in Node.RecieveMessage");
 		}
 
 		List<Func<IncomingMessage, bool>> _Predicates = new List<Func<IncomingMessage, bool>>();
@@ -82,3 +88,4 @@ namespace NBitcoin.Protocol
 		#endregion
 	}
 }
+#endif

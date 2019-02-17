@@ -17,250 +17,358 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 #endregion
 
+using NBitcoin.BouncyCastle.Crypto;
 using NBitcoin.Crypto.Internal;
 using System;
 using System.Diagnostics;
 using System.IO;
+
+#if !WINDOWS_UWP && !USEBC
 using System.Security.Cryptography;
+#endif
 
 namespace NBitcoin.Crypto
 {
-    /// <summary>
-    /// Implements the PBKDF2 key derivation function.
-    /// </summary>
-    /// 
-    /// <example>
-    /// <code title="Computing a Derived Key">
-    /// using System.Security.Cryptography;
-    /// using CryptSharp.Utility;
-    /// 
-    /// // Compute a 128-byte derived key using HMAC-SHA256, 1000 iterations, and a given key and salt.
-    /// byte[] derivedKey = Pbkdf2.ComputeDerivedKey(new HMACSHA256(key), salt, 1000, 128);
-    /// </code>
-    /// <code title="Creating a Derived Key Stream">
-    /// using System.IO;
-    /// using System.Security.Cryptography;
-    /// using CryptSharp.Utility;
-    ///
-    /// // Create a stream using HMAC-SHA512, 1000 iterations, and a given key and salt.
-    /// Stream derivedKeyStream = new Pbkdf2(new HMACSHA512(key), salt, 1000);
-    /// </code>
-    /// </example>
-    public class Pbkdf2 : Stream
-    {
-        #region PBKDF2
-        byte[] _saltBuffer, _digest, _digestT1;
-        KeyedHashAlgorithm _hmacAlgorithm;
-        int _iterations;
+	/// <summary>
+	/// Implements the PBKDF2 key derivation function.
+	/// </summary>
+	/// 
+	/// <example>
+	/// <code title="Computing a Derived Key">
+	/// using System.Security.Cryptography;
+	/// using CryptSharp.Utility;
+	/// 
+	/// // Compute a 128-byte derived key using HMAC-SHA256, 1000 iterations, and a given key and salt.
+	/// byte[] derivedKey = Pbkdf2.ComputeDerivedKey(new HMACSHA256(key), salt, 1000, 128);
+	/// </code>
+	/// <code title="Creating a Derived Key Stream">
+	/// using System.IO;
+	/// using System.Security.Cryptography;
+	/// using CryptSharp.Utility;
+	///
+	/// // Create a stream using HMAC-SHA512, 1000 iterations, and a given key and salt.
+	/// Stream derivedKeyStream = new Pbkdf2(new HMACSHA512(key), salt, 1000);
+	/// </code>
+	/// </example>
+	[Obsolete("This might disappear in favour of .NET BCL's Rfc2898DeriveBytes class")]
+	public class Pbkdf2 : Stream
+	{
+		#region PBKDF2
+		byte[] _saltBuffer, _digest, _digestT1;
 
-        /// <summary>
-        /// Creates a new PBKDF2 stream.
-        /// </summary>
-        /// <param name="hmacAlgorithm">
-        ///     The HMAC algorithm to use, for example <see cref="HMACSHA256"/>.
-        ///     Make sure to set <see cref="KeyedHashAlgorithm.Key"/>.
-        /// </param>
-        /// <param name="salt">
-        ///     The salt.
-        ///     A unique salt means a unique PBKDF2 stream, even if the original key is identical.
-        /// </param>
-        /// <param name="iterations">The number of iterations to apply.</param>
-        public Pbkdf2(KeyedHashAlgorithm hmacAlgorithm, byte[] salt, int iterations)
-        {
-            Check.Null("hmacAlgorithm", hmacAlgorithm);
-            Check.Null("salt", salt);
-            Check.Length("salt", salt, 0, int.MaxValue - 4);
-            Check.Range("iterations", iterations, 1, int.MaxValue);
-            if (hmacAlgorithm.HashSize == 0 || hmacAlgorithm.HashSize % 8 != 0)
-                { throw Exceptions.Argument("hmacAlgorithm", "Unsupported hash size."); }
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+		IMac _hmacAlgorithm;
+#else
+		KeyedHashAlgorithm _hmacAlgorithm;
+#endif
 
-            int hmacLength = hmacAlgorithm.HashSize / 8;
-            _saltBuffer = new byte[salt.Length + 4]; Array.Copy(salt, _saltBuffer, salt.Length);
-            _iterations = iterations; _hmacAlgorithm = hmacAlgorithm;
-            _digest = new byte[hmacLength]; _digestT1 = new byte[hmacLength];
-        }
+		int _iterations;
 
-        /// <summary>
-        /// Reads from the derived key stream.
-        /// </summary>
-        /// <param name="count">The number of bytes to read.</param>
-        /// <returns>Bytes from the derived key stream.</returns>
-        public byte[] Read(int count)
-        {
-            Check.Range("count", count, 0, int.MaxValue);
+		/// <summary>
+		/// Creates a new PBKDF2 stream.
+		/// </summary>
+		/// <param name="hmacAlgorithm">
+		/// </param>
+		/// <param name="salt">
+		///     The salt.
+		///     A unique salt means a unique PBKDF2 stream, even if the original key is identical.
+		/// </param>
+		/// <param name="iterations">The number of iterations to apply.</param>
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+		internal Pbkdf2(IMac hmacAlgorithm, byte[] salt, int iterations)
+		{
+			NBitcoin.Crypto.Internal.Check.Null("hmacAlgorithm", hmacAlgorithm);
+			NBitcoin.Crypto.Internal.Check.Null("salt", salt);
+			NBitcoin.Crypto.Internal.Check.Length("salt", salt, 0, int.MaxValue - 4);
+			NBitcoin.Crypto.Internal.Check.Range("iterations", iterations, 1, int.MaxValue);
+			int hmacLength = hmacAlgorithm.GetMacSize();
+			_saltBuffer = new byte[salt.Length + 4];
+			Array.Copy(salt, _saltBuffer, salt.Length);
+			_iterations = iterations;
+			_hmacAlgorithm = hmacAlgorithm;
+			_digest = new byte[hmacLength];
+			_digestT1 = new byte[hmacLength];
+		}
+#else
+		public Pbkdf2(KeyedHashAlgorithm hmacAlgorithm, byte[] salt, int iterations)
+		{
+			NBitcoin.Crypto.Internal.Check.Null("hmacAlgorithm", hmacAlgorithm);
+			NBitcoin.Crypto.Internal.Check.Null("salt", salt);
+			NBitcoin.Crypto.Internal.Check.Length("salt", salt, 0, int.MaxValue - 4);
+			NBitcoin.Crypto.Internal.Check.Range("iterations", iterations, 1, int.MaxValue);
+			if(hmacAlgorithm.HashSize == 0 || hmacAlgorithm.HashSize%8 != 0)
+			{
+				throw Exceptions.Argument("hmacAlgorithm", "Unsupported hash size.");
+			}
 
-            byte[] buffer = new byte[count];
-            int bytes = Read(buffer, 0, count);
-            if (bytes < count)
-            {
-                throw Exceptions.Argument("count", "Can only return {0} bytes.", bytes);
-            }
+			int hmacLength = hmacAlgorithm.HashSize / 8;
+			_saltBuffer = new byte[salt.Length + 4]; Array.Copy(salt, _saltBuffer, salt.Length);
+			_iterations = iterations; _hmacAlgorithm = hmacAlgorithm;
+			_digest = new byte[hmacLength]; _digestT1 = new byte[hmacLength];
+		}
+#endif
+		/// <summary>
+		/// Reads from the derived key stream.
+		/// </summary>
+		/// <param name="count">The number of bytes to read.</param>
+		/// <returns>Bytes from the derived key stream.</returns>
+		public byte[] Read(int count)
+		{
+			NBitcoin.Crypto.Internal.Check.Range("count", count, 0, int.MaxValue);
 
-            return buffer;
-        }
+			byte[] buffer = new byte[count];
+			int bytes = Read(buffer, 0, count);
+			if(bytes < count)
+			{
+				throw Exceptions.Argument("count", "Can only return {0} bytes.", bytes);
+			}
 
-        /// <summary>
-        /// Computes a derived key.
-        /// </summary>
-        /// <param name="hmacAlgorithm">
-        ///     The HMAC algorithm to use, for example <see cref="HMACSHA256"/>.
-        ///     Make sure to set <see cref="KeyedHashAlgorithm.Key"/>.
-        /// </param>
-        /// <param name="salt">
-        ///     The salt.
-        ///     A unique salt means a unique derived key, even if the original key is identical.
-        /// </param>
-        /// <param name="iterations">The number of iterations to apply.</param>
-        /// <param name="derivedKeyLength">The desired length of the derived key.</param>
-        /// <returns>The derived key.</returns>
-        public static byte[] ComputeDerivedKey(KeyedHashAlgorithm hmacAlgorithm, byte[] salt, int iterations,
-                                               int derivedKeyLength)
-        {
-            Check.Range("derivedKeyLength", derivedKeyLength, 0, int.MaxValue);
+			return buffer;
+		}
 
-            using (Pbkdf2 kdf = new Pbkdf2(hmacAlgorithm, salt, iterations))
-            {
-                return kdf.Read(derivedKeyLength);
-            }
-        }
+		/// <summary>
+		/// Computes a derived key.
+		/// </summary>
+		/// <param name="hmacAlgorithm">
+		/// </param>
+		/// <param name="salt">
+		///     The salt.
+		///     A unique salt means a unique derived key, even if the original key is identical.
+		/// </param>
+		/// <param name="iterations">The number of iterations to apply.</param>
+		/// <param name="derivedKeyLength">The desired length of the derived key.</param>
+		/// <returns>The derived key.</returns>
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+		internal static byte[] ComputeDerivedKey(IMac hmacAlgorithm, byte[] salt, int iterations,
+											   int derivedKeyLength)
+		{
+			NBitcoin.Crypto.Internal.Check.Range("derivedKeyLength", derivedKeyLength, 0, int.MaxValue);
 
-        /// <summary>
-        /// Closes the stream, clearing memory and disposing of the HMAC algorithm.
-        /// </summary>
-        public override void Close()
-        {
-            Security.Clear(_saltBuffer);
-            Security.Clear(_digest);
-            Security.Clear(_digestT1);
-            _hmacAlgorithm.Clear();
-        }
+			using(Pbkdf2 kdf = new Pbkdf2(hmacAlgorithm, salt, iterations))
+			{
+				return kdf.Read(derivedKeyLength);
+			}
+		}
+#else
+		public static byte[] ComputeDerivedKey(KeyedHashAlgorithm hmacAlgorithm, byte[] salt, int iterations,
+											   int derivedKeyLength)
+		{
+			NBitcoin.Crypto.Internal.Check.Range("derivedKeyLength", derivedKeyLength, 0, int.MaxValue);
 
-        void ComputeBlock(uint pos)
-        {
-            BitPacking.BEBytesFromUInt32(pos, _saltBuffer, _saltBuffer.Length - 4);
-            ComputeHmac(_saltBuffer, _digestT1);
-            Array.Copy(_digestT1, _digest, _digestT1.Length);
+			using(Pbkdf2 kdf = new Pbkdf2(hmacAlgorithm, salt, iterations))
+			{
+				return kdf.Read(derivedKeyLength);
+			}
+		}
+#endif
 
-            for (int i = 1; i < _iterations; i++)
-            {
-                ComputeHmac(_digestT1, _digestT1);
-                for (int j = 0; j < _digest.Length; j++) { _digest[j] ^= _digestT1[j]; }
-            }
 
-            Security.Clear(_digestT1);
-        }
+		/// <summary>
+		/// Closes the stream, clearing memory and disposing of the HMAC algorithm.
+		/// </summary>
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+		protected override void Dispose(bool disposing)
+		{
+			Security.Clear(_saltBuffer);
+			Security.Clear(_digest);
+			Security.Clear(_digestT1);
 
-        void ComputeHmac(byte[] input, byte[] output)
-        {
-            _hmacAlgorithm.Initialize();
-            _hmacAlgorithm.TransformBlock(input, 0, input.Length, input, 0);
-            _hmacAlgorithm.TransformFinalBlock(new byte[0], 0, 0);
-            Array.Copy(_hmacAlgorithm.Hash, output, output.Length);
-        }
-        #endregion
+			DisposeHmac();
+		}
+#else
+		public override void Close()
+		{
+			NBitcoin.Crypto.Internal.Security.Clear(_saltBuffer);
+			NBitcoin.Crypto.Internal.Security.Clear(_digest);
+			NBitcoin.Crypto.Internal.Security.Clear(_digestT1);
 
-        #region Stream
-        long _blockStart, _blockEnd, _pos;
+			DisposeHmac();
+		}
+#endif
 
-        /// <exclude />
-        public override void Flush()
-        {
-            
-        }
+		private void DisposeHmac()
+		{
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+			_hmacAlgorithm.Reset();
+#else
+			_hmacAlgorithm.Clear();
+#endif
+		}
 
-        /// <inheritdoc />
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            Check.Bounds("buffer", buffer, offset, count); int bytes = 0;
+		void ComputeBlock(uint pos)
+		{
+			BitPacking.BEBytesFromUInt32(pos, _saltBuffer, _saltBuffer.Length - 4);
+			ComputeHmac(_saltBuffer, _digestT1);
+			Array.Copy(_digestT1, _digest, _digestT1.Length);
 
-            while (count > 0)
-            {
-                if (Position < _blockStart || Position >= _blockEnd)
-                {
-                    if (Position >= Length) { break; }
+			for(int i = 1; i < _iterations; i++)
+			{
+				ComputeHmac(_digestT1, _digestT1);
+				for(int j = 0; j < _digest.Length; j++)
+				{
+					_digest[j] ^= _digestT1[j];
+				}
+			}
 
-                    long pos = Position / _digest.Length;
-                    ComputeBlock((uint)(pos + 1));
-                    _blockStart = pos * _digest.Length;
-                    _blockEnd = _blockStart + _digest.Length;
-                }
+			NBitcoin.Crypto.Internal.Security.Clear(_digestT1);
+		}
 
-                int bytesSoFar = (int)(Position - _blockStart);
-                int bytesThisTime = (int)Math.Min(_digest.Length - bytesSoFar, count);
-                Array.Copy(_digest, bytesSoFar, buffer, bytes, bytesThisTime);
-                count -= bytesThisTime; bytes += bytesThisTime; Position += bytesThisTime;
-            }
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+		void ComputeHmac(byte[] input, byte[] output)
+		{
+			var hash = new byte[_hmacAlgorithm.GetMacSize()];
+			_hmacAlgorithm.BlockUpdate(input, 0, input.Length);
+			_hmacAlgorithm.DoFinal(hash, 0);
+			Array.Copy(hash, output, output.Length);
+		}
+#else
+		void ComputeHmac(byte[] input, byte[] output)
+		{
+			_hmacAlgorithm.Initialize();
+			_hmacAlgorithm.TransformBlock(input, 0, input.Length, input, 0);
+			_hmacAlgorithm.TransformFinalBlock(new byte[0], 0, 0);
+			Array.Copy(_hmacAlgorithm.Hash, output, output.Length);
+		}
+#endif
+		#endregion
 
-            return bytes;
-        }
+		#region Stream
+		long _blockStart, _blockEnd, _pos;
 
-        /// <inheritdoc />
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            long pos;
+		/// <exclude />
+		public override void Flush()
+		{
 
-            switch (origin)
-            {
-                case SeekOrigin.Begin: pos = offset; break;
-                case SeekOrigin.Current: pos = Position + offset; break;
-                case SeekOrigin.End: pos = Length + offset; break;
-                default: throw Exceptions.ArgumentOutOfRange("origin", "Unknown seek type.");
-            }
+		}
 
-            if (pos < 0) { throw Exceptions.Argument("offset", "Can't seek before the stream start."); }
-            Position = pos; return pos;
-        }
+		/// <inheritdoc />
+		public override int Read(byte[] buffer, int offset, int count)
+		{
+			NBitcoin.Crypto.Internal.Check.Bounds("buffer", buffer, offset, count);
+			int bytes = 0;
 
-        /// <exclude />
-        public override void SetLength(long value)
-        {
-            throw Exceptions.NotSupported();
-        }
+			while(count > 0)
+			{
+				if(Position < _blockStart || Position >= _blockEnd)
+				{
+					if(Position >= Length)
+					{
+						break;
+					}
 
-        /// <exclude />
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            throw Exceptions.NotSupported();
-        }
+					long pos = Position / _digest.Length;
+					ComputeBlock((uint)(pos + 1));
+					_blockStart = pos * _digest.Length;
+					_blockEnd = _blockStart + _digest.Length;
+				}
 
-        /// <exclude />
-        public override bool CanRead
-        {
-            get { return true; }
-        }
+				int bytesSoFar = (int)(Position - _blockStart);
+				int bytesThisTime = (int)Math.Min(_digest.Length - bytesSoFar, count);
+				Array.Copy(_digest, bytesSoFar, buffer, bytes, bytesThisTime);
+				count -= bytesThisTime;
+				bytes += bytesThisTime;
+				Position += bytesThisTime;
+			}
 
-        /// <exclude />
-        public override bool CanSeek
-        {
-            get { return true; }
-        }
+			return bytes;
+		}
 
-        /// <exclude />
-        public override bool CanWrite
-        {
-            get { return false; }
-        }
+		/// <inheritdoc />
+		public override long Seek(long offset, SeekOrigin origin)
+		{
+			long pos;
 
-        /// <summary>
-        /// The maximum number of bytes that can be derived is 2^32-1 times the HMAC size.
-        /// </summary>
-        public override long Length
-        {
-            get { return (long)_digest.Length * uint.MaxValue; }
-        }
+			switch(origin)
+			{
+				case SeekOrigin.Begin:
+					pos = offset;
+					break;
+				case SeekOrigin.Current:
+					pos = Position + offset;
+					break;
+				case SeekOrigin.End:
+					pos = Length + offset;
+					break;
+				default:
+					throw Exceptions.ArgumentOutOfRange("origin", "Unknown seek type.");
+			}
 
-        /// <summary>
-        /// The position within the derived key stream.
-        /// </summary>
-        public override long Position
-        {
-            get { return _pos; }
-            set
-            {
-                if (_pos < 0) { throw Exceptions.Argument(null, "Can't seek before the stream start."); }
-                _pos = value;
-            }
-        }
-        #endregion
-    }
+			if(pos < 0)
+			{
+				throw Exceptions.Argument("offset", "Can't seek before the stream start.");
+			}
+			Position = pos;
+			return pos;
+		}
+
+		/// <exclude />
+		public override void SetLength(long value)
+		{
+			throw Exceptions.NotSupported();
+		}
+
+		/// <exclude />
+		public override void Write(byte[] buffer, int offset, int count)
+		{
+			throw Exceptions.NotSupported();
+		}
+
+		/// <exclude />
+		public override bool CanRead
+		{
+			get
+			{
+				return true;
+			}
+		}
+
+		/// <exclude />
+		public override bool CanSeek
+		{
+			get
+			{
+				return true;
+			}
+		}
+
+		/// <exclude />
+		public override bool CanWrite
+		{
+			get
+			{
+				return false;
+			}
+		}
+
+		/// <summary>
+		/// The maximum number of bytes that can be derived is 2^32-1 times the HMAC size.
+		/// </summary>
+		public override long Length
+		{
+			get
+			{
+				return (long)_digest.Length * uint.MaxValue;
+			}
+		}
+
+		/// <summary>
+		/// The position within the derived key stream.
+		/// </summary>
+		public override long Position
+		{
+			get
+			{
+				return _pos;
+			}
+			set
+			{
+				if(_pos < 0)
+				{
+					throw Exceptions.Argument(null, "Can't seek before the stream start.");
+				}
+				_pos = value;
+			}
+		}
+		#endregion
+	}
 }

@@ -1,10 +1,13 @@
-﻿using System;
+﻿#if !NOSOCKET
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using NBitcoin.Logging;
 
 namespace NBitcoin.Protocol
 {
@@ -31,7 +34,7 @@ namespace NBitcoin.Protocol
 		public NewThreadMessageListener(Action<T> process)
 		{
 			if(process == null)
-				throw new ArgumentNullException("process");
+				throw new ArgumentNullException(nameof(process));
 			_Process = process;
 		}
 		#region MessageListener<T> Members
@@ -47,7 +50,7 @@ namespace NBitcoin.Protocol
 					}
 					catch(Exception ex)
 					{
-						NodeServerTrace.Error("Unexpected expected during message loop", ex);
+						Logs.NodeServer.LogError(default,ex,"Unexpected expected during message loop");
 					}
 				});
 		}
@@ -74,7 +77,7 @@ namespace NBitcoin.Protocol
 							}
 							catch(Exception ex)
 							{
-								NodeServerTrace.Error("Unexpected expected during message loop", ex);
+								Logs.NodeServer.LogError(default,ex,"Unexpected expected during message loop");
 							}
 						}
 					}
@@ -129,7 +132,7 @@ namespace NBitcoin.Protocol
 			}
 		}
 
-		public virtual T RecieveMessage(CancellationToken cancellationToken = default(CancellationToken))
+		public virtual T ReceiveMessage(CancellationToken cancellationToken = default(CancellationToken))
 		{
 			return MessageQueue.Take(cancellationToken);
 		}
@@ -144,3 +147,4 @@ namespace NBitcoin.Protocol
 		#endregion
 	}
 }
+#endif

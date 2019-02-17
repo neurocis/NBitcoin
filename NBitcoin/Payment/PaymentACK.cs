@@ -1,29 +1,64 @@
-﻿using System;
+﻿using NBitcoin.Protobuf;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+#if !NOHTTPCLIENT
 using System.Net.Http;
 using System.Net.Http.Headers;
+#endif
 using System.Text;
 using System.Threading.Tasks;
 
 namespace NBitcoin.Payment
 {
+	[Obsolete("BIP70 is obsolete")]
 	public class PaymentACK
 	{
 		public const int MaxLength = 60000;
+
+		public static PaymentACK Load(byte[] data, Network network)
+		{
+			return Load(new MemoryStream(data), network);
+		}
+
+		[Obsolete("Use Load(byte[] data, Network network) instead")]
 		public static PaymentACK Load(byte[] data)
 		{
 			return Load(new MemoryStream(data));
 		}
 
-		public static PaymentACK Load(Stream source)
+		public static PaymentACK Load(Stream source, Network network)
 		{
 			if(source.CanSeek && source.Length > MaxLength)
-				throw new ArgumentException("PaymentACK messages larger than " + MaxLength + " bytes should be rejected", "source");
-			var data = PaymentRequest.Serializer.Deserialize<Proto.PaymentACK>(source);
-			return new PaymentACK(data);
+				throw new ArgumentOutOfRangeException("PaymentACK messages larger than " + MaxLength + " bytes should be rejected", "source");
+
+			PaymentACK ack = new PaymentACK();
+			Protobuf.ProtobufReaderWriter reader = new Protobuf.ProtobufReaderWriter(source);
+			int key;
+			while(reader.TryReadKey(out key))
+			{
+				switch(key)
+				{
+					case 1:
+						var bytes = reader.ReadBytes();
+						ack.Payment = PaymentMessage.Load(bytes, network);
+						break;
+					case 2:
+						ack.Memo = reader.ReadString();
+						break;
+					default:
+						break;
+				}
+			}
+			return ack;
+		}
+
+		[Obsolete("Use Load(Stream source, Network network) instead")]
+		public static PaymentACK Load(Stream source)
+		{
+			return Load(source, null);
 		}
 		public PaymentACK()
 		{
@@ -31,32 +66,17 @@ namespace NBitcoin.Payment
 		}
 		public PaymentACK(PaymentMessage payment)
 		{
-			_Payment = payment;
-		}
-		internal PaymentACK(Proto.PaymentACK data)
-		{
-			_Payment = new PaymentMessage(data.payment);
-			Memo = data.memoSpecified ? data.memo : null;
-			OriginalData = data;
+			Payment = payment;
 		}
 
-		private readonly PaymentMessage _Payment = new PaymentMessage();
 		public readonly static string MediaType = "application/bitcoin-paymentack";
 		public PaymentMessage Payment
-		{
-			get
-			{
-				return _Payment;
-			}
-		}
-
-		public string Memo
 		{
 			get;
 			set;
 		}
 
-		internal Proto.PaymentACK OriginalData
+		public string Memo
 		{
 			get;
 			set;
@@ -71,18 +91,44 @@ namespace NBitcoin.Payment
 
 		public void WriteTo(Stream output)
 		{
-			var data = OriginalData == null ? new Proto.PaymentACK() : (Proto.PaymentACK)PaymentRequest.Serializer.DeepClone(OriginalData);
-			data.memo = Memo;
-			data.payment = Payment.ToData();
-			PaymentRequest.Serializer.Serialize(output, data);
+			Protobuf.ProtobufReaderWriter proto = new ProtobufReaderWriter(output);
+			proto.WriteKey(1, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+			proto.WriteBytes(Payment.ToBytes());
+			if(Memo != null)
+			{
+				proto.WriteKey(2, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+				proto.WriteString(Memo);
+			}
 		}
+#if !NOFILEIO
+		public static PaymentACK Load(string file, Network network)
+		{
+			using(var fs = File.OpenRead(file))
+			{
+				return Load(fs, network);
+			}
+		}
+
+		[Obsolete("Use Load(string file, Network network) instead")]
+		public static PaymentACK Load(string file)
+		{
+			return Load(file, null);
+		}
+#endif
 	}
+	[Obsolete("BIP70 is obsolete")]
 	public class PaymentMessage
 	{
 		public const int MaxLength = 50000;
+		public static PaymentMessage Load(byte[] data, Network network)
+		{
+			return Load(new MemoryStream(data), network);
+		}
+
+		[Obsolete("Use Load(byte[] data, Network network)")]
 		public static PaymentMessage Load(byte[] data)
 		{
-			return Load(new MemoryStream(data));
+			return Load(new MemoryStream(data), null);
 		}
 
 		public PaymentACK CreateACK(string memo = null)
@@ -93,12 +139,45 @@ namespace NBitcoin.Payment
 			};
 		}
 
-		public static PaymentMessage Load(Stream source)
+
+		public static PaymentMessage Load(Stream source, Network network)
 		{
 			if(source.CanSeek && source.Length > MaxLength)
 				throw new ArgumentException("Payment messages larger than " + MaxLength + " bytes should be rejected by the merchant's server", "source");
-			var data = PaymentRequest.Serializer.Deserialize<Proto.Payment>(source);
-			return new PaymentMessage(data);
+			network = network ?? Network.Main;
+			PaymentMessage message = new PaymentMessage();
+			ProtobufReaderWriter proto = new ProtobufReaderWriter(source);
+			int key;
+			while(proto.TryReadKey(out key))
+			{
+				switch(key)
+				{
+					case 1:
+						message.MerchantData = proto.ReadBytes();
+						break;
+					case 2:
+						var tx = network.Consensus.ConsensusFactory.CreateTransaction();
+						tx.ReadWrite(proto.ReadBytes(), network);
+						message.Transactions.Add(tx);
+						break;
+					case 3:
+						message.RefundTo.Add(PaymentOutput.Load(proto.ReadBytes()));
+						break;
+					case 4:
+						message.Memo = proto.ReadString();
+						break;
+					default:
+						break;
+				}
+			}
+			message.Network = network;
+			return message;
+		}
+
+		[Obsolete("Use Load(Stream, Network)")]
+		public static PaymentMessage Load(Stream source)
+		{
+			return Load(source, null);
 		}
 
 		public string Memo
@@ -127,20 +206,6 @@ namespace NBitcoin.Payment
 		{
 
 		}
-		internal PaymentMessage(Proto.Payment data)
-		{
-			Memo = data.memoSpecified ? data.memo : null;
-			MerchantData = data.merchant_data;
-			foreach(var tx in data.transactions)
-			{
-				Transactions.Add(new Transaction(tx));
-			}
-			foreach(var refund in data.refund_to)
-			{
-				RefundTo.Add(new PaymentOutput(refund));
-			}
-			OriginalData = data;
-		}
 
 		public PaymentMessage(PaymentRequest request)
 		{
@@ -159,11 +224,10 @@ namespace NBitcoin.Payment
 			get;
 			set;
 		}
-
-		internal Proto.Payment OriginalData
+		public Network Network
 		{
 			get;
-			set;
+			private set;
 		}
 
 		public byte[] ToBytes()
@@ -175,27 +239,32 @@ namespace NBitcoin.Payment
 
 		public void WriteTo(Stream output)
 		{
-			PaymentRequest.Serializer.Serialize(output, this.ToData());
-		}
-
-		internal Proto.Payment ToData()
-		{
-			var data = OriginalData == null ? new Proto.Payment() : (Proto.Payment)PaymentRequest.Serializer.DeepClone(OriginalData);
-			data.memo = Memo;
-			data.merchant_data = MerchantData;
-
-			foreach(var refund in RefundTo)
+			var proto = new ProtobufReaderWriter(output);
+			if(MerchantData != null)
 			{
-				data.refund_to.Add(refund.ToData());
-			}
-			foreach(var transaction in Transactions)
-			{
-				data.transactions.Add(transaction.ToBytes());
+				proto.WriteKey(1, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+				proto.WriteBytes(MerchantData);
 			}
 
-			return data;
-		}
+			foreach(var tx in Transactions)
+			{
+				proto.WriteKey(2, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+				proto.WriteBytes(tx.ToBytes());
+			}
 
+			foreach(var txout in RefundTo)
+			{
+				proto.WriteKey(3, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+				proto.WriteBytes(txout.ToBytes());
+			}
+
+			if(Memo != null)
+			{
+				proto.WriteKey(4, ProtobufReaderWriter.PROTOBUF_LENDELIM);
+				proto.WriteString(Memo);
+			}
+		}
+#if !NOHTTPCLIENT
 		/// <summary>
 		/// Send the payment to given address
 		/// </summary>
@@ -206,7 +275,7 @@ namespace NBitcoin.Payment
 			if(paymentUrl == null)
 				paymentUrl = ImplicitPaymentUrl;
 			if(paymentUrl == null)
-				throw new ArgumentNullException("paymentUrl");
+				throw new ArgumentNullException(nameof(paymentUrl));
 			try
 			{
 				return SubmitPaymentAsync(paymentUrl, null).Result;
@@ -219,30 +288,59 @@ namespace NBitcoin.Payment
 
 		public async Task<PaymentACK> SubmitPaymentAsync(Uri paymentUrl, HttpClient httpClient)
 		{
+			bool own = false;
 			if(paymentUrl == null)
 				paymentUrl = ImplicitPaymentUrl;
 			if(paymentUrl == null)
-				throw new ArgumentNullException("paymentUrl");
+				throw new ArgumentNullException(nameof(paymentUrl));
 			if(httpClient == null)
-				httpClient = new HttpClient();
-
-
-			var request = new HttpRequestMessage(HttpMethod.Post, paymentUrl.OriginalString);
-			request.Headers.Clear();
-			request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(PaymentACK.MediaType));
-			request.Content = new ByteArrayContent(this.ToBytes());
-			request.Content.Headers.ContentType = new MediaTypeHeaderValue(PaymentMessage.MediaType);
-
-			var result = await httpClient.SendAsync(request);
-			if(!result.IsSuccessStatusCode)
-				throw new WebException(result.StatusCode + "(" + (int)result.StatusCode + ")");
-
-			if(result.Content.Headers.ContentType == null || !result.Content.Headers.ContentType.MediaType.Equals(PaymentACK.MediaType, StringComparison.InvariantCultureIgnoreCase))
 			{
-				throw new WebException("Invalid contenttype received, expecting " + PaymentACK.MediaType + ", but got " + result.Content.Headers.ContentType);
+				httpClient = new HttpClient();
+				own = true;
 			}
-			var response = await result.Content.ReadAsStreamAsync();
-			return PaymentACK.Load(response);
+
+			try
+			{
+				var request = new HttpRequestMessage(HttpMethod.Post, paymentUrl.OriginalString);
+				request.Headers.Clear();
+				request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(PaymentACK.MediaType));
+				request.Content = new ByteArrayContent(this.ToBytes());
+				request.Content.Headers.ContentType = new MediaTypeHeaderValue(PaymentMessage.MediaType);
+
+				var result = await httpClient.SendAsync(request).ConfigureAwait(false);
+				if(!result.IsSuccessStatusCode)
+					throw new WebException(result.StatusCode + "(" + (int)result.StatusCode + ")");
+
+				if(result.Content.Headers.ContentType == null || !result.Content.Headers.ContentType.MediaType.Equals(PaymentACK.MediaType, StringComparison.OrdinalIgnoreCase))
+				{
+					throw new WebException("Invalid contenttype received, expecting " + PaymentACK.MediaType + ", but got " + result.Content.Headers.ContentType);
+				}
+				var response = await result.Content.ReadAsStreamAsync().ConfigureAwait(false);
+				return PaymentACK.Load(response, Network);
+			}
+			finally
+			{
+				if(own)
+					httpClient.Dispose();
+			}
 		}
+#endif
+#if !NOFILEIO
+		public static PaymentMessage Load(string file, Network network)
+		{
+			using(var fs = File.OpenRead(file))
+			{
+				return Load(fs, network);
+			}
+		}
+		[Obsolete("Use Load(String file, Network network)")]
+		public static PaymentMessage Load(string file)
+		{
+			using(var fs = File.OpenRead(file))
+			{
+				return Load(fs);
+			}
+		}
+#endif
 	}
 }

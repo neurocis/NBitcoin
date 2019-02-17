@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NOFILEIO
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,11 +20,11 @@ namespace NBitcoin
 		public FileLock(string filePath, FileLockType lockType)
 		{
 			if(filePath == null)
-				throw new ArgumentNullException("filePath");
+				throw new ArgumentNullException(nameof(filePath));
 			if(!File.Exists(filePath))
 				try
 				{
-					File.Create(filePath).Close();
+					File.Create(filePath).Dispose();
 				}
 				catch
 				{
@@ -71,3 +72,4 @@ namespace NBitcoin
 		//}
 	}
 }
+#endif

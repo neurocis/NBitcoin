@@ -14,6 +14,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Xunit;
 using NBitcoin.BouncyCastle.Asn1;
+using System.Security;
 
 namespace NBitcoin.Tests
 {
@@ -110,15 +111,34 @@ namespace NBitcoin.Tests
 
 		private void TestSig(ECPrivateKeyParameters key, DeterministicSigTest test)
 		{
-			DeterministicECDSA dsa = new DeterministicECDSA(test.Hash);
+			var dsa = new DeterministicECDSA(GetHash(test.Hash), false);
 			dsa.setPrivateKey(key);
 			dsa.update(Encoding.UTF8.GetBytes(test.Message));
 			var result = dsa.sign();
 
-			Assert.Equal(test.K, dsa.LastK);
-			Assert.Equal(test.R, dsa.LastR);
+			var signature = ECDSASignature.FromDER(result);
+			Assert.Equal(test.S, signature.S);
+			Assert.Equal(test.R, signature.R);
+		}
 
-			Assert.Equal(test.S, ECDSASignature.FromDER(result).S);
+		private Func<BouncyCastle.Crypto.IDigest> GetHash(string hash)
+		{
+			if(hash.Equals("SHA-256", StringComparison.OrdinalIgnoreCase))
+				return () => new NBitcoin.BouncyCastle.Crypto.Digests.Sha256Digest();
+
+			if(hash.Equals("SHA-1", StringComparison.OrdinalIgnoreCase))
+				return () => new NBitcoin.BouncyCastle.Crypto.Digests.Sha1Digest();
+
+			if(hash.Equals("SHA-224", StringComparison.OrdinalIgnoreCase))
+				return () => new NBitcoin.BouncyCastle.Crypto.Digests.Sha224Digest();
+
+			if(hash.Equals("SHA-384", StringComparison.OrdinalIgnoreCase))
+				return () => new NBitcoin.BouncyCastle.Crypto.Digests.Sha384Digest();
+
+			if(hash.Equals("SHA-512", StringComparison.OrdinalIgnoreCase))
+				return () => new NBitcoin.BouncyCastle.Crypto.Digests.Sha512Digest();
+
+			throw new NotImplementedException();
 		}
 
 		private void TestSig(DeterministicSigTest test)
@@ -131,7 +151,7 @@ namespace NBitcoin.Tests
 		[Trait("UnitTest", "UnitTest")]
 		public void DeterministicSignatureTestVectors()
 		{
-			foreach(var test in ParseTestsDump(File.ReadAllText("Data/determiniticECDSA.txt")))
+			foreach(var test in ParseTestsDump(File.ReadAllText("data/determiniticECDSA.txt")))
 			{
 				TestSig(test);
 			}
@@ -178,13 +198,13 @@ namespace NBitcoin.Tests
 			Dictionary<string, string> values = ToDictionnary(data);
 
 			return new DeterministicSigTest()
-				{
-					Message = match.Groups[2].Value,
-					Hash = match.Groups[1].Value,
-					K = new BigInteger(values["k"], 16),
-					R = new BigInteger(values["r"], 16),
-					S = new BigInteger(values["s"], 16),
-				};
+			{
+				Message = match.Groups[2].Value,
+				Hash = match.Groups[1].Value,
+				K = new BigInteger(values["k"], 16),
+				R = new BigInteger(values["r"], 16),
+				S = new BigInteger(values["s"], 16),
+			};
 		}
 
 		private static Dictionary<string, string> ToDictionnary(string data)
@@ -225,11 +245,123 @@ namespace NBitcoin.Tests
 
 			ECPoint pub = curve.G.Multiply(key.D);
 
-			Assert.Equal(pub.X.ToBigInteger(), new BigInteger(values["Ux"], 16));
-			Assert.Equal(pub.Y.ToBigInteger(), new BigInteger(values["Uy"], 16));
+			Assert.Equal(pub.Normalize().XCoord.ToBigInteger(), new BigInteger(values["Ux"], 16));
+			Assert.Equal(pub.Normalize().YCoord.ToBigInteger(), new BigInteger(values["Uy"], 16));
 
 			return key;
 		}
 
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void BlindingSignature()
+		{
+			// Test with known values 
+			var requester = new SchnorrBlinding.Requester();
+			var r = new Key(Encoders.Hex.DecodeData("31E151628AED2A6ABF7155809CF4F3C762E7160F38B4DA56B784D9045190CFA0"));
+			var key = new Key(Encoders.Hex.DecodeData("B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF"));
+			var signer = new SchnorrBlinding.Signer(key, r);
+
+			var message = new uint256(Encoders.Hex.DecodeData("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"), false);
+			var blindedMessage = requester.BlindMessage(message, r.PubKey, key.PubKey);
+
+			var blindSignature = signer.Sign(blindedMessage);
+			var unblindedSignature = requester.UnblindSignature(blindSignature);
+
+			Assert.True( SchnorrBlinding.VerifySignature(message, unblindedSignature, key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(uint256.Zero, unblindedSignature, key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(uint256.One, unblindedSignature, key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(unblindedSignature.C, BigInteger.Zero.Subtract(unblindedSignature.S)), 
+				key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.Zero.Subtract(unblindedSignature.C), unblindedSignature.S), 
+				key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.Zero.Subtract(unblindedSignature.C), unblindedSignature.S), 
+				new Key().PubKey) );
+
+			// Test with unknown values 
+			requester = new SchnorrBlinding.Requester();
+			signer = new SchnorrBlinding.Signer(new Key(), new Key());
+
+			message = Hashes.Hash256(Encoders.ASCII.DecodeData("Hello world!"));
+			blindedMessage = requester.BlindMessage(message, signer.R.PubKey, signer.Key.PubKey);
+
+			blindSignature = signer.Sign(blindedMessage);
+			unblindedSignature = requester.UnblindSignature(blindSignature);
+
+			Assert.True( SchnorrBlinding.VerifySignature(message, unblindedSignature, signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(uint256.One, unblindedSignature, signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(uint256.One, unblindedSignature, signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.Zero, unblindedSignature.S), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(unblindedSignature.C, BigInteger.Zero), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.One, unblindedSignature.S), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(unblindedSignature.C, BigInteger.One), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.One, BigInteger.One), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(unblindedSignature.C, BigInteger.Zero.Subtract(unblindedSignature.S)), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.Zero.Subtract(unblindedSignature.C), unblindedSignature.S), 
+				signer.Key.PubKey) );
+			Assert.False(SchnorrBlinding.VerifySignature(
+				message, 
+				new UnblindedSignature(BigInteger.Zero.Subtract(unblindedSignature.C), unblindedSignature.S), 
+				new Key().PubKey) );
+
+
+			var newMessage = Encoders.ASCII.DecodeData("Hello, World!");
+			for(var i=0; i < 1_000; i++)
+			{
+				requester = new SchnorrBlinding.Requester();
+				signer = new SchnorrBlinding.Signer(new Key());
+				blindedMessage = requester.BlindMessage(newMessage, signer.R.PubKey, signer.Key.PubKey);
+				blindSignature = signer.Sign(blindedMessage);
+				unblindedSignature = requester.UnblindSignature(blindSignature);
+
+				Assert.True( signer.VerifyUnblindedSignature(unblindedSignature, newMessage) );
+			}
+
+
+			var ex = Assert.Throws<ArgumentException>(()=>signer.Sign(uint256.Zero));
+			Assert.StartsWith("Invalid blinded message.", ex.Message);
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void Signatures_use_low_R()
+		{
+			var rnd = new Random();
+			for(var i=0; i < 100; i++)
+			{
+				var key = new Key();
+				var msgLen = rnd.Next(10, 1000);
+				var msg = new byte[msgLen];
+				rnd.NextBytes(msg);
+
+				var sig = key.Sign(Hashes.Hash256(msg));
+				Assert.True(sig.IsLowR && sig.ToDER().Length <= 70);
+			}
+		}
 	}
 }

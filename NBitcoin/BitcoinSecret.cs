@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace NBitcoin
 {
-	public class BitcoinSecret : Base58Data
+	public class BitcoinSecret : Base58Data, IDestination, ISecret
 	{
 		public BitcoinSecret(Key key, Network network)
 			: base(ToBytes(key), network)
@@ -23,36 +23,48 @@ namespace NBitcoin
 				return keyBytes.Concat(new byte[] { 0x01 }).ToArray();
 		}
 		public BitcoinSecret(string base58, Network expectedAddress = null)
-			: base(base58, expectedAddress)
 		{
+			Init<BitcoinSecret>(base58, expectedAddress);
 		}
 
-        private BitcoinAddress _address; 
+		private BitcoinPubKeyAddress _address;
 
-		public BitcoinAddress GetAddress()
+		public BitcoinPubKeyAddress GetAddress()
 		{
-            if (_address == null)
-                _address = Key.PubKey.GetAddress(Network);
-
-            return _address;
+			return _address ?? (_address = PrivateKey.PubKey.GetAddress(Network));
 		}
 
-		public KeyId ID
+		public BitcoinWitPubKeyAddress GetSegwitAddress()
 		{
-			get
-			{
-				return Key.PubKey.ID;
-			}
+			return PrivateKey.PubKey.GetSegwitAddress(Network);
 		}
 
-		public Key Key
+		public virtual KeyId PubKeyHash
 		{
 			get
 			{
-				Key ret = new Key(vchData, 32, IsCompressed);
-				return ret;
+				return PrivateKey.PubKey.Hash;
 			}
 		}
+
+		public PubKey PubKey
+		{
+			get
+			{
+				return PrivateKey.PubKey;
+			}
+		}
+
+		#region ISecret Members
+		Key _Key;
+		public Key PrivateKey
+		{
+			get
+			{
+				return _Key ?? (_Key = new Key(vchData, 32, IsCompressed));
+			}
+		}
+		#endregion
 
 		protected override bool IsValid
 		{
@@ -71,7 +83,7 @@ namespace NBitcoin
 
 		public BitcoinEncryptedSecret Encrypt(string password)
 		{
-			return Key.GetEncryptedBitcoinSecret(password, Network);
+			return PrivateKey.GetEncryptedBitcoinSecret(password, Network);
 		}
 
 
@@ -86,7 +98,8 @@ namespace NBitcoin
 			}
 			else
 			{
-				byte[] result = Encoders.Base58Check.DecodeData(wifData);
+				var enc = Network.NetworkStringParser.GetBase58CheckEncoder();
+				byte[] result = enc.DecodeData(wifData);
 				var resultList = result.ToList();
 
 				if(compressed.Value)
@@ -97,7 +110,7 @@ namespace NBitcoin
 				{
 					resultList.RemoveAt(resultList.Count - 1);
 				}
-				return new BitcoinSecret(Encoders.Base58Check.EncodeData(resultList.ToArray()), Network);
+				return new BitcoinSecret(enc.EncodeData(resultList.ToArray()), Network);
 			}
 		}
 
@@ -116,5 +129,17 @@ namespace NBitcoin
 				return Base58Type.SECRET_KEY;
 			}
 		}
+
+		#region IDestination Members
+
+		public Script ScriptPubKey
+		{
+			get
+			{
+				return GetAddress().ScriptPubKey;
+			}
+		}
+
+		#endregion
 	}
 }

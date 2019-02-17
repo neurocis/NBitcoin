@@ -1,42 +1,618 @@
 ﻿using NBitcoin.BouncyCastle.Crypto.Digests;
+using NBitcoin.BouncyCastle.Crypto.Parameters;
+using NBitcoin.BouncyCastle.Security;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
+#if !NONATIVEHASH
+using System.Security.Cryptography;
+#endif
+
 namespace NBitcoin.Crypto
 {
-	public class Hashes
+	public static class Hashes
 	{
-		public static uint256 Hash256(byte[] data, int count)
-		{
-			data = count == 0 ? new byte[1] : data;
-			return new uint256(SHA256(SHA256(data, count)));
-		}
-
-
+		#region Hash256
 		public static uint256 Hash256(byte[] data)
 		{
-			return Hash256(data, data.Length);
+			return Hash256(data, 0, data.Length);
+		}
+
+		public static uint256 Hash256(byte[] data, int count)
+		{
+			return Hash256(data, 0, count);
+		}
+
+		public static uint256 Hash256(byte[] data, int offset, int count)
+		{
+			return new uint256(Hash256RawBytes(data, offset, count));
+		}
+		#endregion
+
+		public static byte[] Hash256RawBytes(byte[] data, int offset, int count)
+		{
+#if NONATIVEHASH
+			Sha256Digest sha256 = new Sha256Digest();
+			sha256.BlockUpdate(data, offset, count);
+			byte[] rv = new byte[32];
+			sha256.DoFinal(rv, 0);
+			sha256.BlockUpdate(rv, 0, rv.Length);
+			sha256.DoFinal(rv, 0);
+			return rv;
+#else
+			using(var sha = new SHA256Managed())
+			{
+				var h = sha.ComputeHash(data, offset, count);
+				return sha.ComputeHash(h, 0, h.Length);
+			}
+#endif
+		}
+
+		#region Hash160
+		public static uint160 Hash160(byte[] data)
+		{
+			return Hash160(data, 0, data.Length);
 		}
 
 		public static uint160 Hash160(byte[] data, int count)
 		{
-			data = count == 0 ? new byte[1] : data;
-			return new uint160(RIPEMD160(SHA256(data, count)));
+			return Hash160(data, 0, count);
 		}
 
+		public static uint160 Hash160(byte[] data, int offset, int count)
+		{
+			return new uint160(RIPEMD160(SHA256(data, offset, count)));
+		}
+		#endregion
+
+		#region RIPEMD160
 		private static byte[] RIPEMD160(byte[] data)
 		{
-			return RIPEMD160(data, data.Length);
+			return RIPEMD160(data, 0, data.Length);
 		}
-		public static byte[] SHA1(byte[] data, int count)
+
+		public static byte[] RIPEMD160(byte[] data, int count)
+		{
+			return RIPEMD160(data, 0, count);
+		}
+
+		public static byte[] RIPEMD160(byte[] data, int offset, int count)
+		{
+#if NONATIVEHASH || NETCORE || NETSTANDARD
+			RipeMD160Digest ripemd = new RipeMD160Digest();
+			ripemd.BlockUpdate(data, offset, count);
+			byte[] rv = new byte[20];
+			ripemd.DoFinal(rv, 0);
+			return rv;
+#else
+			using(var ripm = new RIPEMD160Managed())
+			{
+				return ripm.ComputeHash(data, offset, count);
+			}
+#endif
+		}
+
+		#endregion
+
+		internal struct SipHasher
+		{
+			ulong v_0;
+			ulong v_1;
+			ulong v_2;
+			ulong v_3;
+			ulong count;
+			ulong tmp;
+			public SipHasher(ulong k0, ulong k1)
+			{
+				v_0 = 0x736f6d6570736575UL ^ k0;
+				v_1 = 0x646f72616e646f6dUL ^ k1;
+				v_2 = 0x6c7967656e657261UL ^ k0;
+				v_3 = 0x7465646279746573UL ^ k1;
+				count = 0;
+				tmp = 0;
+			}
+
+			public SipHasher Write(ulong data)
+			{
+				ulong v0 = v_0, v1 = v_1, v2 = v_2, v3 = v_3;
+				v3 ^= data;
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+				v0 ^= data;
+
+				v_0 = v0;
+				v_1 = v1;
+				v_2 = v2;
+				v_3 = v3;
+
+				count += 8;
+				return this;
+			}
+
+			public SipHasher Write(byte[] data)
+			{
+				ulong v0 = v_0, v1 = v_1, v2 = v_2, v3 = v_3;
+				var size = data.Length;
+				var t = tmp;
+				var c = count;
+				int offset = 0;
+
+				while(size-- != 0)
+				{
+					t |= ((ulong)((data[offset++]))) << (int)(8 * (c % 8));
+					c++;
+					if((c & 7) == 0)
+					{
+						v3 ^= t;
+						//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+						v0 += v1;
+						v2 += v3;
+						v1 =  v1 << 13 | v1 >> 51;
+						v3 =  v3 << 16 | v3 >> 48;
+						v1 ^= v0;
+						v3 ^= v2;
+						v0 =  v0 << 32 | v0 >> 32;
+						v2 += v1;
+						v0 += v3;
+						v1 =  v1 << 17 | v1 >> 47;
+						v3 =  v3 << 21 | v3 >> 43;
+						v1 ^= v2;
+						v3 ^= v0;
+						v2 =  v2 << 32 | v2 >> 32;
+
+						//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+						v0 += v1;
+						v2 += v3;
+						v1 =  v1 << 13 | v1 >> 51;
+						v3 =  v3 << 16 | v3 >> 48;
+						v1 ^= v0;
+						v3 ^= v2;
+						v0 =  v0 << 32 | v0 >> 32;
+						v2 += v1;
+						v0 += v3;
+						v1 =  v1 << 17 | v1 >> 47;
+						v3 =  v3 << 21 | v3 >> 43;
+						v1 ^= v2;
+						v3 ^= v0;
+						v2 =  v2 << 32 | v2 >> 32;
+						v0 ^= t;
+						t = 0;
+					}
+				}
+
+				v_0 = v0;
+				v_1 = v1;
+				v_2 = v2;
+				v_3 = v3;
+				count = c;
+				tmp = t;
+
+				return this;
+			}
+
+			public ulong Finalize()
+			{
+				ulong v0 = v_0, v1 = v_1, v2 = v_2, v3 = v_3;
+
+				ulong t = tmp | (((ulong)count) << 56);
+
+				v3 ^= t;
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= t;
+				v2 ^= 0xFF;
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				return v0 ^ v1 ^ v2 ^ v3;
+			}
+
+			public static ulong SipHashUint256(ulong k0, ulong k1, uint256 val)
+			{
+				/* Specialized implementation for efficiency */
+				ulong d = GetULong(val, 0);
+
+				ulong v0 = 0x736f6d6570736575UL ^ k0;
+				ulong v1 = 0x646f72616e646f6dUL ^ k1;
+				ulong v2 = 0x6c7967656e657261UL ^ k0;
+				ulong v3 = 0x7465646279746573UL ^ k1 ^ d;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= d;
+				d = GetULong(val, 1);
+				v3 ^= d;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= d;
+				d = GetULong(val, 2);
+				v3 ^= d;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= d;
+				d = GetULong(val, 3);
+				v3 ^= d;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= d;
+				v3 ^= ((ulong)4) << 59;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				v0 ^= ((ulong)4) << 59;
+				v2 ^= 0xFF;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				//SIPROUND(ref v0, ref v1, ref v2, ref v3);
+				v0 += v1;
+				v2 += v3;
+				v1 =  v1 << 13 | v1 >> 51;
+				v3 =  v3 << 16 | v3 >> 48;
+				v1 ^= v0;
+				v3 ^= v2;
+				v0 =  v0 << 32 | v0 >> 32;
+				v2 += v1;
+				v0 += v3;
+				v1 =  v1 << 17 | v1 >> 47;
+				v3 =  v3 << 21 | v3 >> 43;
+				v1 ^= v2;
+				v3 ^= v0;
+				v2 =  v2 << 32 | v2 >> 32;
+
+				return v0 ^ v1 ^ v2 ^ v3;
+			}
+
+			internal static ulong GetULong(uint256 val, int position)
+			{
+				switch(position)
+				{
+					case 0:
+						return (ulong)val.pn0 + (ulong)((ulong)val.pn1 << 32);
+					case 1:
+						return (ulong)val.pn2 + (ulong)((ulong)val.pn3 << 32);
+					case 2:
+						return (ulong)val.pn4 + (ulong)((ulong)val.pn5 << 32);
+					case 3:
+						return (ulong)val.pn6 + (ulong)((ulong)val.pn7 << 32);
+					default:
+						throw new ArgumentOutOfRangeException("position should be less than 4", "position");
+				}
+			}
+		}
+
+		public static ulong SipHash(ulong k0, ulong k1, uint256 val)
+		{
+			return SipHasher.SipHashUint256(k0, k1, val);
+		}
+
+		public static byte[] SHA1(byte[] data, int offset, int count)
 		{
 			var sha1 = new Sha1Digest();
-			sha1.BlockUpdate(data, 0, count);
+			sha1.BlockUpdate(data, offset, count);
 			byte[] rv = new byte[20];
 			sha1.DoFinal(rv, 0);
 			return rv;
@@ -44,33 +620,45 @@ namespace NBitcoin.Crypto
 
 		public static byte[] SHA256(byte[] data)
 		{
-			return SHA256(data, data.Length);
+			return SHA256(data, 0, data.Length);
 		}
-		public static byte[] SHA256(byte[] data, int count)
+
+		public static byte[] SHA256(byte[] data, int offset, int count)
 		{
-#if BOUNCY_ONLY
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
 			Sha256Digest sha256 = new Sha256Digest();
-			sha256.BlockUpdate(data, 0, count);
+			sha256.BlockUpdate(data, offset, count);
 			byte[] rv = new byte[32];
 			sha256.DoFinal(rv, 0);
 			return rv;
 #else
-			using(var sha = System.Security.Cryptography.SHA256.Create())
+			using(var sha = new SHA256Managed())
 			{
-				return sha.ComputeHash(data, 0, count);
+				return sha.ComputeHash(data, offset, count);
 			}
 #endif
 		}
 
 
-
-		public static byte[] RIPEMD160(byte[] data, int count)
+		public static byte[] SHA512(byte[] data)
 		{
-			RipeMD160Digest ripemd = new RipeMD160Digest();
-			ripemd.BlockUpdate(data, 0, count);
-			byte[] rv = new byte[20];
-			ripemd.DoFinal(rv, 0);
+			return SHA512(data, 0, data.Length);
+		}
+
+		public static byte[] SHA512(byte[] data, int offset, int count)
+		{
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+			Sha512Digest sha512 = new Sha512Digest();
+			sha512.BlockUpdate(data, offset, count);
+			byte[] rv = new byte[32];
+			sha512.DoFinal(rv, 0);
 			return rv;
+#else
+			using(var sha = new SHA512Managed())
+			{
+				return sha.ComputeHash(data, offset, count);
+			}
+#endif
 		}
 
 		private static uint rotl32(uint x, byte r)
@@ -162,16 +750,38 @@ namespace NBitcoin.Crypto
 			}
 		}
 
-		internal static uint160 Hash160(byte[] bytes)
+#if NONATIVEHASH
+		public static byte[] HMACSHA512(byte[] key, byte[] data)
 		{
-			return Hash160(bytes, bytes.Length);
+			var mac = new NBitcoin.BouncyCastle.Crypto.Macs.HMac(new Sha512Digest());
+			mac.Init(new KeyParameter(key));
+			mac.Update(data);
+			byte[] result = new byte[mac.GetMacSize()];
+			mac.DoFinal(result, 0);
+			return result;
 		}
 
+		public static byte[] HMACSHA256(byte[] key, byte[] data)
+		{
+			var mac = new NBitcoin.BouncyCastle.Crypto.Macs.HMac(new Sha256Digest());
+			mac.Init(new KeyParameter(key));
+			mac.Update(data);
+			byte[] result = new byte[mac.GetMacSize()];
+			mac.DoFinal(result, 0);
+			return result;
+		}
+
+#else
 		public static byte[] HMACSHA512(byte[] key, byte[] data)
 		{
 			return new HMACSHA512(key).ComputeHash(data);
 		}
-
+		
+		public static byte[] HMACSHA256(byte[] key, byte[] data)
+		{
+			return new HMACSHA256(key).ComputeHash(data);
+		}
+#endif
 		public static byte[] BIP32Hash(byte[] chainCode, uint nChild, byte header, byte[] data)
 		{
 			byte[] num = new byte[4];

@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿#if !NOJSONNET
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -11,6 +12,11 @@ namespace NBitcoin.RPC
 {
 	public class RPCRequest
 	{
+		public RPCRequest(RPCOperations method, object[] parameters)
+			: this(method.ToString(), parameters)
+		{
+
+		}
 		public RPCRequest(string method, object[] parameters)
 			: this()
 		{
@@ -43,6 +49,11 @@ namespace NBitcoin.RPC
 			set;
 		}
 
+		public Dictionary<string, object> NamedParams
+		{
+			get; set;
+		}
+
 		public void WriteJSON(TextWriter writer)
 		{
 			var jsonWriter = new JsonTextWriter(writer);
@@ -50,7 +61,7 @@ namespace NBitcoin.RPC
 			jsonWriter.Flush();
 		}
 
-		public void WriteJSON(JsonTextWriter writer)
+		internal void WriteJSON(JsonTextWriter writer)
 		{
 			writer.WriteStartObject();
 			WriteProperty(writer, "jsonrpc", JsonRpc);
@@ -58,25 +69,59 @@ namespace NBitcoin.RPC
 			WriteProperty(writer, "method", Method);
 
 			writer.WritePropertyName("params");
-			writer.WriteStartArray();
+
 
 			if(Params != null)
 			{
-				for(int i = 0 ; i < Params.Length ; i++)
+				writer.WriteStartArray();
+				for(int i = 0; i < Params.Length; i++)
 				{
-					if(Params[i] is JToken)
-					{
-						((JToken)Params[i]).WriteTo(writer);
-					}
-					else
-					{
-						writer.WriteValue(Params[i]);
-					}
+					WriteValue(writer, Params[i]);
 				}
+				writer.WriteEndArray();
 			}
-
-			writer.WriteEndArray();
+			else if(NamedParams != null)
+			{
+				writer.WriteStartObject();
+				foreach(var namedParam in NamedParams)
+				{
+					writer.WritePropertyName(namedParam.Key);
+					WriteValue(writer, namedParam.Value);
+				}
+				writer.WriteEndObject();
+			}
+			else
+			{
+				writer.WriteStartArray();
+				writer.WriteEndArray();
+			}
+			
 			writer.WriteEndObject();
+		}
+
+		private void WriteValue(JsonTextWriter writer, object obj)
+		{
+			if(obj is JToken)
+			{
+				((JToken)obj).WriteTo(writer);
+			}
+			else if(obj is Array)
+			{
+				writer.WriteStartArray();
+				foreach(var x in (Array)obj)
+				{
+					writer.WriteValue(x);
+				}
+				writer.WriteEndArray();
+			}
+			else if(obj is uint256)
+			{
+				writer.WriteValue(obj.ToString());
+			}
+			else
+			{
+				writer.WriteValue(obj);
+			}
 		}
 
 		private void WriteProperty<TValue>(JsonTextWriter writer, string property, TValue value)
@@ -86,3 +131,4 @@ namespace NBitcoin.RPC
 		}
 	}
 }
+#endif

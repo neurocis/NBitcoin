@@ -3,10 +3,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using ooo = NBitcoin.BouncyCastle.Math;
+using System.Reflection;
 
 namespace NBitcoin
 {
@@ -15,7 +15,9 @@ namespace NBitcoin
 		//Copied from satoshi's code
 		public static string GetOpName(OpcodeType opcode)
 		{
-			switch(opcode)
+			if (!_ValidOpCode[(byte)opcode])
+				return "OP_UNKNOWN";
+			switch (opcode)
 			{
 				// push value
 				case OpcodeType.OP_0:
@@ -49,19 +51,19 @@ namespace NBitcoin
 				case OpcodeType.OP_9:
 					return "9";
 				case OpcodeType.OP_10:
-					return "10";
+					return "OP_10";
 				case OpcodeType.OP_11:
-					return "11";
+					return "OP_11";
 				case OpcodeType.OP_12:
-					return "12";
+					return "OP_12";
 				case OpcodeType.OP_13:
-					return "13";
+					return "OP_13";
 				case OpcodeType.OP_14:
-					return "14";
+					return "OP_14";
 				case OpcodeType.OP_15:
-					return "15";
+					return "OP_15";
 				case OpcodeType.OP_16:
-					return "16";
+					return "OP_16";
 
 				// control
 				case OpcodeType.OP_NOP:
@@ -232,14 +234,14 @@ namespace NBitcoin
 					return "OP_CHECKMULTISIG";
 				case OpcodeType.OP_CHECKMULTISIGVERIFY:
 					return "OP_CHECKMULTISIGVERIFY";
+				case OpcodeType.OP_CHECKLOCKTIMEVERIFY:
+					return "OP_CLTV";
+				case OpcodeType.OP_CHECKSEQUENCEVERIFY:
+					return "OP_CSV";
 
 				// expanson
 				case OpcodeType.OP_NOP1:
 					return "OP_NOP1";
-				case OpcodeType.OP_NOP2:
-					return "OP_NOP2";
-				case OpcodeType.OP_NOP3:
-					return "OP_NOP3";
 				case OpcodeType.OP_NOP4:
 					return "OP_NOP4";
 				case OpcodeType.OP_NOP5:
@@ -255,20 +257,8 @@ namespace NBitcoin
 				case OpcodeType.OP_NOP10:
 					return "OP_NOP10";
 
-
-
-				// template matching params
-				case OpcodeType.OP_PUBKEYHASH:
-					return "OP_PUBKEYHASH";
-				case OpcodeType.OP_PUBKEY:
-					return "OP_PUBKEY";
-				case OpcodeType.OP_SMALLDATA:
-					return "OP_SMALLDATA";
-
-				case OpcodeType.OP_INVALIDOPCODE:
-					return "OP_INVALIDOPCODE";
 				default:
-					return "OP_UNKNOWN";
+					return Enum.GetName(typeof(OpcodeType), opcode);
 			}
 		}
 		internal static bool IsPushCode(OpcodeType opcode)
@@ -276,48 +266,74 @@ namespace NBitcoin
 			return 0 <= opcode && opcode <= OpcodeType.OP_16 && opcode != OpcodeType.OP_RESERVED;
 		}
 
-		static Dictionary<string, OpcodeType> _OpcodeByName;
+		internal static Dictionary<string, OpcodeType> _OpcodeByName;
 		static Op()
 		{
+			_ValidOpCode = GetValidOpCode();
 			_OpcodeByName = new Dictionary<string, OpcodeType>();
-			foreach(var code in Enum.GetValues(typeof(OpcodeType)).Cast<OpcodeType>().Distinct())
+			foreach (var code in Enum.GetValues(typeof(OpcodeType)).Cast<OpcodeType>().Distinct())
 			{
 				var name = GetOpName(code);
-				if(name != "OP_UNKNOWN")
-					_OpcodeByName.Add(name, code);
+				if (name != "OP_UNKNOWN")
+					_OpcodeByName.AddOrReplace(name, code);
+			}
+			_OpcodeByName.AddOrReplace("OP_TRUE", OpcodeType.OP_1);
+			_OpcodeByName.AddOrReplace("OP_FALSE", OpcodeType.OP_0);
+			_OpcodeByName.AddOrReplace("OP_CHECKLOCKTIMEVERIFY", OpcodeType.OP_CHECKLOCKTIMEVERIFY);
+			_OpcodeByName.AddOrReplace("OP_HODL", OpcodeType.OP_CHECKLOCKTIMEVERIFY);
+			_OpcodeByName.AddOrReplace("OP_NOP2", OpcodeType.OP_CHECKLOCKTIMEVERIFY);
+			_OpcodeByName.AddOrReplace("OP_CHECKSEQUENCEVERIFY", OpcodeType.OP_CHECKSEQUENCEVERIFY);
+			_OpcodeByName.AddOrReplace("OP_NOP3", OpcodeType.OP_CHECKSEQUENCEVERIFY);
+
+			foreach (var op in new[]
+			{
+				new object[]{"OP_0", OpcodeType.OP_0},
+				new object[]{"OP_1", OpcodeType.OP_1},
+				new object[]{"OP_2", OpcodeType.OP_2},
+				new object[]{"OP_3", OpcodeType.OP_3},
+				new object[]{"OP_4", OpcodeType.OP_4},
+				new object[]{"OP_5", OpcodeType.OP_5},
+				new object[]{"OP_6", OpcodeType.OP_6},
+				new object[]{"OP_7", OpcodeType.OP_7},
+				new object[]{"OP_8", OpcodeType.OP_8},
+				new object[]{"OP_9", OpcodeType.OP_9}
+			})
+			{
+				_OpcodeByName.AddOrReplace((string)op[0], (OpcodeType)op[1]);
 			}
 		}
-		public static OpcodeType GetOpCode(string name)
+		public static bool GetOpCode(string name, out OpcodeType result)
 		{
-			OpcodeType code;
-			if(_OpcodeByName.TryGetValue(name, out code))
-				return code;
-			else
-				return OpcodeType.OP_INVALIDOPCODE;
+			return _OpcodeByName.TryGetValue(name, out result);
 		}
 
-		public static Op GetPushOp(BigInteger data)
+		public static Op GetPushOp(long value)
 		{
-			return GetPushOp(Utils.BigIntegerToBytes(data));
+			return GetPushOp(Utils.BigIntegerToBytes(ooo.BigInteger.ValueOf(value)));
 		}
 		public static Op GetPushOp(byte[] data)
 		{
 			Op op = new Op();
 			op.PushData = data;
-			if(data.Length == 0)
+			if (data.Length == 0)
 				op.Code = OpcodeType.OP_0;
-			else if(data.Length == 1 && (byte)1 <= data[0] && data[0] <= (byte)16)
+			else if (data.Length == 1 && (byte)1 <= data[0] && data[0] <= (byte)16)
 				op.Code = (OpcodeType)(data[0] + (byte)OpcodeType.OP_1 - 1);
-			else if(data.Length == 1 && (byte)0x81 == data[0])
+			else if (data.Length == 1 && (byte)0x81 == data[0])
 				op.Code = OpcodeType.OP_1NEGATE;
-			else if(0x01 <= data.Length && data.Length <= 0x4b)
+			else if (0x01 <= data.Length && data.Length <= 0x4b)
 				op.Code = (OpcodeType)(byte)data.Length;
-			else if(data.Length <= 0xFF)
+			else if (data.Length <= 0xFF)
 				op.Code = OpcodeType.OP_PUSHDATA1;
-			else if(data.LongLength <= 0xFFFF)
+#if !NETSTANDARD1X
+			else if (data.LongLength <= 0xFFFF)
 				op.Code = OpcodeType.OP_PUSHDATA2;
-			else if(data.LongLength <= 0xFFFFFFFF)
+			else if (data.LongLength <= 0xFFFFFFFF)
 				op.Code = OpcodeType.OP_PUSHDATA4;
+#else
+			else if(data.Length <= 0xFFFF)
+				op.Code = OpcodeType.OP_PUSHDATA2;
+#endif
 			else
 				throw new NotSupportedException("Data length should not be bigger than 0xFFFFFFFF");
 			return op;
@@ -332,15 +348,43 @@ namespace NBitcoin
 		{
 			get
 			{
-				if(_Name == null)
+				if (_Name == null)
 					_Name = GetOpName(Code);
 				return _Name;
 			}
 		}
+
+		OpcodeType _Code;
+		static readonly bool[] _ValidOpCode;
+
+		private static bool[] GetValidOpCode()
+		{
+			var valid = new bool[256];
+			foreach (var val in Enum.GetValues(typeof(OpcodeType)))
+			{
+				valid[(byte)val] = true;
+			}
+			for (byte i = 0; ; i++)
+			{
+				if (IsPushCode((OpcodeType)i))
+					valid[i] = true;
+				if (i == 255)
+					break;
+			}
+			return valid;
+		}
+
 		public OpcodeType Code
 		{
-			get;
-			set;
+			get
+			{
+				return _Code;
+			}
+			set
+			{
+				_Code = value;
+				IsInvalid = !_ValidOpCode[(byte)value];
+			}
 		}
 		public byte[] PushData
 		{
@@ -352,36 +396,36 @@ namespace NBitcoin
 		{
 			var bitStream = new BitcoinStream(result, true);
 
-			if(Code == OpcodeType.OP_0)
+			if (Code == OpcodeType.OP_0)
 			{
 				//OP_0 already pushed
 				return;
 			}
 
-			if(OpcodeType.OP_1 <= Code && Code <= OpcodeType.OP_16)
+			if (OpcodeType.OP_1 <= Code && Code <= OpcodeType.OP_16)
 			{
 				//OP_1 to OP_16 already pushed
 				return;
 			}
-			if(Code == OpcodeType.OP_1NEGATE)
+			if (Code == OpcodeType.OP_1NEGATE)
 			{
 				//OP_1Negate already pushed
 				return;
 			}
 
-			if(0x01 <= (byte)Code && (byte)Code <= 0x4b)
+			if (0x01 <= (byte)Code && (byte)Code <= 0x4b)
 			{
 				//Data length already pushed
 			}
-			else if(Code == OpcodeType.OP_PUSHDATA1)
+			else if (Code == OpcodeType.OP_PUSHDATA1)
 			{
 				bitStream.ReadWrite((byte)data.Length);
 			}
-			else if(Code == OpcodeType.OP_PUSHDATA2)
+			else if (Code == OpcodeType.OP_PUSHDATA2)
 			{
 				bitStream.ReadWrite((ushort)data.Length);
 			}
-			else if(Code == OpcodeType.OP_PUSHDATA4)
+			else if (Code == OpcodeType.OP_PUSHDATA4)
 			{
 				bitStream.ReadWrite((uint)data.Length);
 			}
@@ -389,62 +433,75 @@ namespace NBitcoin
 				throw new NotSupportedException("Data length should not be bigger than 0xFFFFFFFF");
 			result.Write(data, 0, data.Length);
 		}
-		internal static byte[] ReadData(Op op, Stream stream, bool ignoreWrongPush = false)
+		internal byte[] ReadData(Stream stream)
 		{
-			var opcode = op.Code;
 			uint len = 0;
 			BitcoinStream bitStream = new BitcoinStream(stream, false);
-			if(opcode == 0)
+			if (Code == 0)
 				return new byte[0];
 
-			if((byte)OpcodeType.OP_1 <= (byte)opcode && (byte)opcode <= (byte)OpcodeType.OP_16)
+			if ((byte)OpcodeType.OP_1 <= (byte)Code && (byte)Code <= (byte)OpcodeType.OP_16)
 			{
-				return new byte[] { (byte)(opcode - OpcodeType.OP_1 + 1) };
+				return new byte[] { (byte)(Code - OpcodeType.OP_1 + 1) };
 			}
 
-			if(opcode == OpcodeType.OP_1NEGATE)
+			if (Code == OpcodeType.OP_1NEGATE)
 			{
 				return new byte[] { 0x81 };
 			}
 
 			try
 			{
-				if(0x01 <= (byte)opcode && (byte)opcode <= 0x4b)
-					len = (uint)opcode;
-				else if(opcode == OpcodeType.OP_PUSHDATA1)
+				if (0x01 <= (byte)Code && (byte)Code <= 0x4b)
+					len = (uint)Code;
+				else if (Code == OpcodeType.OP_PUSHDATA1)
 					len = bitStream.ReadWrite((byte)0);
-				else if(opcode == OpcodeType.OP_PUSHDATA2)
+				else if (Code == OpcodeType.OP_PUSHDATA2)
 					len = bitStream.ReadWrite((ushort)0);
-				else if(opcode == OpcodeType.OP_PUSHDATA4)
+				else if (Code == OpcodeType.OP_PUSHDATA4)
 					len = bitStream.ReadWrite((uint)0);
 				else
-					throw new FormatException("Invalid opcode for pushing data : " + opcode);
+				{
+					IsInvalid = true;
+					return new byte[0];
+				}
+
+
+				byte[] data = null;
+
+				if (len <= MAX_SCRIPT_ELEMENT_SIZE) //Most of the time
+				{
+					data = new byte[len];
+					var readen = stream.Read(data, 0, data.Length);
+					if (readen != data.Length)
+					{
+						IsInvalid = true;
+						return new byte[0];
+					}
+				}
+				else //Mitigate against a big array allocation
+				{
+					List<byte> bytes = new List<byte>();
+					for (int i = 0; i < len; i++)
+					{
+						var b = stream.ReadByte();
+						if (b < 0)
+						{
+							IsInvalid = true;
+							return new byte[0];
+						}
+						bytes.Add((byte)b);
+					}
+					data = bytes.ToArray();
+				}
+				return data;
+
 			}
-			catch(EndOfStreamException)
+			catch (EndOfStreamException)
 			{
-				if(!ignoreWrongPush)
-					throw new FormatException("Incomplete script");
-				op.IncompleteData = true;
+				IsInvalid = true;
 				return new byte[0];
 			}
-
-			if(stream.CanSeek && stream.Length - stream.Position < len)
-			{
-				len = (uint)(stream.Length - stream.Position);
-				if(!ignoreWrongPush)
-					throw new FormatException("Not enough bytes pushed with " + opcode.ToString() + " expected " + len + " but got " + len);
-				op.IncompleteData = true;
-			}
-			byte[] data = new byte[len];
-			var readen = stream.Read(data, 0, data.Length);
-			if(readen != data.Length && !ignoreWrongPush)
-				throw new FormatException("Not enough bytes pushed with " + opcode.ToString() + " expected " + len + " but got " + readen);
-			else if(readen != data.Length)
-			{
-				op.IncompleteData = true;
-				Array.Resize(ref data, readen);
-			}
-			return data;
 		}
 
 		public byte[] ToBytes()
@@ -456,14 +513,14 @@ namespace NBitcoin
 
 		public override string ToString()
 		{
-			if(PushData != null)
+			if (PushData != null)
 			{
-				if(PushData.Length == 0)
+				if (PushData.Length == 0)
 					return "0";
 				var result = Encoders.Hex.EncodeData(PushData);
 				return result.Length == 2 && result[0] == '0' ? result.Substring(1) : result;
 			}
-			else if(Name == "OP_UNKNOWN")
+			else if (Name == "OP_UNKNOWN")
 			{
 				return Name + "(" + string.Format("0x{0:x2}", (byte)Code) + ")";
 			}
@@ -476,38 +533,44 @@ namespace NBitcoin
 		public void WriteTo(Stream stream)
 		{
 			stream.WriteByte((byte)Code);
-			if(PushData != null)
+			if (PushData != null)
 			{
 				PushDataToStream(PushData, stream);
 			}
 		}
 
 		static string unknown = "OP_UNKNOWN(0x";
+		const int MAX_SCRIPT_ELEMENT_SIZE = 520;
 		internal static Op Read(TextReader textReader)
 		{
-			MemoryStream ms = new MemoryStream();
 			var opname = ReadWord(textReader);
-			var opcode = GetOpCode(opname);
+			OpcodeType opcode;
 
-			if(
-				(opcode == OpcodeType.OP_INVALIDOPCODE || Op.IsPushCode(opcode))
-				&& !opname.StartsWith(unknown)
-				&& opname != "OP_INVALIDOPCODE")
+			var isOpCode = GetOpCode(opname, out opcode);
+
+			if (
+				(!isOpCode || Op.IsPushCode(opcode))
+				&& !opname.StartsWith(unknown))
 			{
-				if(opcode == OpcodeType.OP_0)
+				if (isOpCode && opcode == OpcodeType.OP_0)
 					return GetPushOp(new byte[0]);
+				opname = opname.Replace("OP_", "");
+				if (opname.Equals("TRUE", StringComparison.OrdinalIgnoreCase))
+					opname = "1";
+				if (opname.Equals("FALSE", StringComparison.OrdinalIgnoreCase))
+					opname = "0";
 				return GetPushOp(Encoders.Hex.DecodeData(opname.Length == 1 ? "0" + opname : opname));
 			}
-			else if(opname.StartsWith(unknown))
+			else if (opname.StartsWith(unknown))
 			{
 				try
 				{
-					if(opname.StartsWith(unknown))
+					if (opname.StartsWith(unknown))
 					{
 						opcode = (OpcodeType)(Encoders.Hex.DecodeData(opname.Substring(unknown.Length, 2))[0]);
 					}
 				}
-				catch(Exception ex)
+				catch (Exception ex)
 				{
 					throw new FormatException("Invalid unknown opcode", ex);
 				}
@@ -521,14 +584,14 @@ namespace NBitcoin
 
 		public static implicit operator Op(OpcodeType codeType)
 		{
-			if(!IsPushCode(codeType))
+			if (!IsPushCode(codeType))
 				return new Op()
 				{
 					Code = codeType,
 				};
 			else
 			{
-				if(OpcodeType.OP_1 <= codeType && codeType <= OpcodeType.OP_16)
+				if (OpcodeType.OP_1 <= codeType && codeType <= OpcodeType.OP_16)
 				{
 					return new Op()
 					{
@@ -536,7 +599,7 @@ namespace NBitcoin
 						PushData = new byte[] { (byte)((byte)codeType - (byte)OpcodeType.OP_1 + 1) }
 					};
 				}
-				else if(codeType == OpcodeType.OP_0)
+				else if (codeType == OpcodeType.OP_0)
 				{
 					return new Op()
 					{
@@ -544,7 +607,7 @@ namespace NBitcoin
 						PushData = new byte[0]
 					};
 				}
-				else if(codeType == OpcodeType.OP_1NEGATE)
+				else if (codeType == OpcodeType.OP_1NEGATE)
 				{
 					return new Op()
 					{
@@ -563,23 +626,24 @@ namespace NBitcoin
 		{
 			StringBuilder builder = new StringBuilder();
 			int r;
-			while((r = textReader.Read()) != -1)
+			while ((r = textReader.Read()) != -1)
 			{
 				var ch = (char)r;
 				bool isSpace = DataEncoder.IsSpace(ch);
-				if(isSpace && builder.Length == 0)
+				if (isSpace && builder.Length == 0)
 					continue;
-				if(isSpace && builder.Length != 0)
+				if (isSpace && builder.Length != 0)
 					break;
 				builder.Append((char)r);
 			}
 			return builder.ToString();
 		}
 
-		public bool IncompleteData
+
+		public bool IsInvalid
 		{
 			get;
-			set;
+			private set;
 		}
 
 		public bool IsSmallUInt
@@ -597,20 +661,43 @@ namespace NBitcoin
 				return IsSmallUInt || Code == OpcodeType.OP_1NEGATE;
 			}
 		}
-		public BigInteger? GetValue()
+
+		public int? GetInt()
 		{
-			if(PushData == null)
+			var l = GetLong();
+			if (l == null)
 				return null;
-			return Utils.BytesToBigInteger(PushData);
+			if (l.Value > int.MaxValue)
+				return int.MaxValue;
+			else if (l.Value < int.MinValue)
+				return int.MinValue;
+			return (int)l.Value;
+		}
+
+		public long? GetLong()
+		{
+			if (PushData == null)
+				return null;
+			var vch = PushData;
+			if (vch.Length == 0)
+				return 0;
+
+			long result = 0;
+			for (int i = 0; i != vch.Length; ++i)
+				result |= ((long)(vch[i])) << 8 * i;
+
+			// If the input vector's most significant byte is 0x80, remove it from
+			// the result's msb and return a negative.
+			if ((vch[vch.Length - 1] & 0x80) != 0)
+			{
+				var temp = ~(0x80UL << (8 * (vch.Length - 1)));
+				return -((long)((ulong)result & temp));
+			}
+			return result;
 		}
 	}
 	public class ScriptReader
 	{
-		public bool IgnoreIncoherentPushData
-		{
-			get;
-			set;
-		}
 		private readonly Stream _Inner;
 		public Stream Inner
 		{
@@ -621,8 +708,8 @@ namespace NBitcoin
 		}
 		public ScriptReader(Stream stream)
 		{
-			if(stream == null)
-				throw new ArgumentNullException("stream");
+			if (stream == null)
+				throw new ArgumentNullException(nameof(stream));
 			_Inner = stream;
 		}
 		public ScriptReader(byte[] data)
@@ -635,16 +722,14 @@ namespace NBitcoin
 		public Op Read()
 		{
 			var b = Inner.ReadByte();
-			if(b == -1)
+			if (b == -1)
 				return null;
 			var opcode = (OpcodeType)b;
-			if(Op.IsPushCode(opcode))
+			if (Op.IsPushCode(opcode))
 			{
 				Op op = new Op();
 				op.Code = opcode;
-				op.PushData = Op.ReadData(op, Inner, IgnoreIncoherentPushData);
-				if(op.IncompleteData == true)
-					return null;
+				op.PushData = op.ReadData(Inner);
 				return op;
 			}
 			return new Op()
@@ -653,12 +738,75 @@ namespace NBitcoin
 			};
 		}
 
+		public bool TryReadOpCode(out OpcodeType opcode)
+		{
+			opcode = OpcodeType.OP_0;
+			var b = Inner.ReadByte();
+			if (b == -1)
+				return false;
+			opcode = (OpcodeType)b;
 
+			if (opcode == 0)
+				return true;
+			if ((byte)OpcodeType.OP_1 <= (byte)opcode && (byte)opcode <= (byte)OpcodeType.OP_16)
+			{
+				return true;
+			}
+			if (opcode == OpcodeType.OP_1NEGATE)
+			{
+				return true;
+			}
+			uint len = 0;
+			if (0x01 <= (byte)opcode && (byte)opcode <= 0x4b)
+				len = (uint)opcode;
+			else
+			{
+				var bitStream = new BitcoinStream(Inner, false);
+				if (opcode == OpcodeType.OP_PUSHDATA1)
+					len = bitStream.ReadWrite((byte)0);
+				else if (opcode == OpcodeType.OP_PUSHDATA2)
+					len = bitStream.ReadWrite((ushort)0);
+				else if (opcode == OpcodeType.OP_PUSHDATA4)
+					len = bitStream.ReadWrite((uint)0);
+				else
+					return true;
+			}
+			MoveStream(Inner, len);
+			return true;
+		}
+
+		static readonly byte[] Scratch = new byte[512];
+		private void MoveStream(Stream inner, uint bytes)
+		{
+			if (inner.CanSeek)
+			{
+				bytes = (uint)Math.Min(inner.Length - inner.Position, bytes);
+				if(bytes > 0)
+					inner.Seek(bytes, SeekOrigin.Current);
+			}
+			else
+			{
+				uint remaining = bytes;
+				while(remaining != 0)
+				{
+					var readen = inner.Read(Scratch, 0, Scratch.Length);
+					if (readen <= 0)
+						return;
+					remaining -= (uint)readen;
+				}
+			}
+		}
+
+		public bool HasError
+		{
+			get;
+			private set;
+		}
 
 		public IEnumerable<Op> ToEnumerable()
 		{
 			Op code;
-			while((code = Read()) != null)
+			while ((code = Read()) != null)
 			{
 				yield return code;
 			}

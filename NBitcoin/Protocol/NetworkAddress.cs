@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NOSOCKET
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -9,10 +10,35 @@ namespace NBitcoin.Protocol
 {
 	public class NetworkAddress : IBitcoinSerializable
 	{
-		uint time;
+		public NetworkAddress()
+		{
+
+		}
+		public NetworkAddress(IPEndPoint endpoint)
+		{
+			Endpoint = endpoint;
+		}
+		public NetworkAddress(IPAddress address, int port)
+		{
+			Endpoint = new IPEndPoint(address, port);
+		}
+
+		internal uint ntime;
 		ulong service = 1;
 		byte[] ip = new byte[16];
 		ushort port;
+
+		public ulong Service
+		{
+			get
+			{
+				return service;
+			}
+			set
+			{
+				service = value;
+			}
+		}
 
 		public TimeSpan Ago
 		{
@@ -29,8 +55,8 @@ namespace NBitcoin.Protocol
 		public void Adjust()
 		{
 			var nNow = Utils.DateTimeToUnixTime(DateTimeOffset.UtcNow);
-			if(time <= 100000000 || time > nNow + 10 * 60)
-				time = nNow - 5 * 24 * 60 * 60;
+			if(ntime <= 100000000 || ntime > nNow + 10 * 60)
+				ntime = nNow - 5 * 24 * 60 * 60;
 		}
 
 		public IPEndPoint Endpoint
@@ -64,20 +90,26 @@ namespace NBitcoin.Protocol
 		{
 			get
 			{
-				return Utils.UnixTimeToDateTime(time);
+				return Utils.UnixTimeToDateTime(ntime);
 			}
 			set
 			{
-				time = Utils.DateTimeToUnixTime(value);
+				ntime = Utils.DateTimeToUnixTime(value);
 			}
 		}
-
+		uint version = 100100;
 		#region IBitcoinSerializable Members
 
 		public void ReadWrite(BitcoinStream stream)
 		{
-			if(stream.ProtocolVersion >= ProtocolVersion.CADDR_TIME_VERSION)
-				stream.ReadWrite(ref time);
+			if(stream.Type == SerializationType.Disk)
+			{
+				stream.ReadWrite(ref version);
+			}
+			if(
+				stream.Type == SerializationType.Disk ||
+				(stream.ProtocolCapabilities.SupportTimeAddress && stream.Type != SerializationType.Hash))
+				stream.ReadWrite(ref ntime);
 			stream.ReadWrite(ref service);
 			stream.ReadWrite(ref ip);
 			using(stream.BigEndianScope())
@@ -90,7 +122,17 @@ namespace NBitcoin.Protocol
 
 		public void ZeroTime()
 		{
-			this.time = 0;
+			this.ntime = 0;
+		}
+
+		internal byte[] GetKey()
+		{
+			var vKey = new byte[18];
+			Array.Copy(ip, vKey, 16);
+			vKey[16] = (byte)(port / 0x100);
+			vKey[17] = (byte)(port & 0x0FF);
+			return vKey;
 		}
 	}
 }
+#endif

@@ -8,7 +8,7 @@ namespace NBitcoin.Protocol
 {
 	public class Payload : IBitcoinSerializable
 	{
-		public string Command
+		public virtual string Command
 		{
 			get
 			{
@@ -20,7 +20,7 @@ namespace NBitcoin.Protocol
 
 		public void ReadWrite(BitcoinStream stream)
 		{
-			using(stream.NetworkFormatScope(true))
+			using(stream.SerializationTypeScope(SerializationType.Network))
 			{
 				ReadWriteCore(stream);
 			}

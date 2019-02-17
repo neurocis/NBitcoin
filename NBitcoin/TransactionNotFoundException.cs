@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 
 namespace NBitcoin
 {
-	[Serializable]
 	public class TransactionNotFoundException : Exception
 	{
 		public TransactionNotFoundException()
@@ -22,22 +21,14 @@ namespace NBitcoin
 		{
 		}
 		public TransactionNotFoundException(string message, uint256 txId, Exception inner)
-			: base(message, inner)
+			: base(message ?? "Transaction " + txId + " not found", inner)
 		{
-			if(message == null)
-				message = "Transaction " + txId + " not found";
 			TxId = txId;
 		}
 		public uint256 TxId
 		{
 			get;
 			set;
-		}
-		protected TransactionNotFoundException(
-		  System.Runtime.Serialization.SerializationInfo info,
-		  System.Runtime.Serialization.StreamingContext context)
-			: base(info, context)
-		{
 		}
 	}
 }

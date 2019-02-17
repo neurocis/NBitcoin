@@ -35,7 +35,7 @@ namespace NBitcoin.Stealth
 
 		public BitcoinAddress GetAddress(Network network)
 		{
-			return new BitcoinAddress(ID, network);
+			return new BitcoinPubKeyAddress(ID, network);
 		}
 	}
 
@@ -49,7 +49,7 @@ namespace NBitcoin.Stealth
 			if(address.SignatureCount > 1)
 			{
 				Redeem = ScriptPubKey;
-				ScriptPubKey = ScriptPubKey.ID.CreateScriptPubKey();
+				ScriptPubKey = ScriptPubKey.Hash.ScriptPubKey;
 			}
 			SetStealthKeys();
 		}
@@ -63,7 +63,7 @@ namespace NBitcoin.Stealth
 		{
 			if(sigCount == 1 && uncoveredPubKeys.Length == 1)
 			{
-				return PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(uncoveredPubKeys[0].ID);
+				return PayToPubkeyHashTemplate.Instance.GenerateScriptPubKey(uncoveredPubKeys[0].Hash);
 			}
 			else
 			{
@@ -89,7 +89,7 @@ namespace NBitcoin.Stealth
 				var para = PayToMultiSigTemplate.Instance.ExtractScriptPubKeyParameters(script);
 				if(para == null)
 					throw new ArgumentException("Invalid stealth spendable output script", "spendable");
-				return para.PubKeys.Select(k => k.ID).ToArray();
+				return para.PubKeys.Select(k => k.Hash).ToArray();
 			}
 		}
 
@@ -135,14 +135,18 @@ namespace NBitcoin.Stealth
 
 		public void AddToTransaction(Transaction transaction, Money value)
 		{
-			transaction.Outputs.Add(new TxOut(0, Metadata.Script));
+			if(transaction == null)
+				throw new ArgumentNullException(nameof(transaction));
+			if(value == null)
+				throw new ArgumentNullException(nameof(value));
+			transaction.Outputs.Add(new TxOut(Money.Zero, Metadata.Script));
 			transaction.Outputs.Add(new TxOut(value, ScriptPubKey));
 		}
 
 		public static StealthPayment[] GetPayments(Transaction transaction, BitcoinStealthAddress address, Key scan)
 		{
 			List<StealthPayment> result = new List<StealthPayment>();
-			for(int i = 0 ; i < transaction.Outputs.Count - 1 ; i++)
+			for(int i = 0; i < transaction.Outputs.Count - 1; i++)
 			{
 				var metadata = StealthMetadata.TryParse(transaction.Outputs[i].ScriptPubKey);
 				if(metadata != null && (address == null || address.Prefix.Match(metadata.BitField)))
@@ -155,9 +159,9 @@ namespace NBitcoin.Stealth
 					if(scriptId != null)
 					{
 						if(address == null)
-							throw new ArgumentNullException("address");
+							throw new ArgumentNullException(nameof(address));
 						redeem = CreatePaymentScript(address, metadata.EphemKey, scan);
-						expectedScriptPubKey = redeem.ID.CreateScriptPubKey();
+						expectedScriptPubKey = redeem.Hash.ScriptPubKey;
 						if(expectedScriptPubKey != scriptPubKey)
 							continue;
 					}

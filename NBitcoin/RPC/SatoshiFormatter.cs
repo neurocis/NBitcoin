@@ -1,4 +1,5 @@
-﻿using NBitcoin.DataEncoders;
+﻿#if !NOJSONNET
+using NBitcoin.DataEncoders;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -14,22 +15,21 @@ namespace NBitcoin.RPC
 	{
 		protected override void BuildTransaction(JObject json, Transaction tx)
 		{
-			var txid = new uint256((string)json.GetValue("txid"));
 			tx.Version = (uint)json.GetValue("version");
 			tx.LockTime = (uint)json.GetValue("locktime");
 
 			var vin = (JArray)json.GetValue("vin");
-			for(int i = 0 ; i < vin.Count ; i++)
+			for(int i = 0; i < vin.Count; i++)
 			{
 				var jsonIn = (JObject)vin[i];
-				var txin = new NBitcoin.TxIn();
+				var txin = new TxIn();
 				tx.Inputs.Add(txin);
 
 				var script = (JObject)jsonIn.GetValue("scriptSig");
 				if(script != null)
 				{
 					txin.ScriptSig = new Script(Encoders.Hex.DecodeData((string)script.GetValue("hex")));
-					txin.PrevOut.Hash = new uint256((string)jsonIn.GetValue("txid"));
+					txin.PrevOut.Hash = uint256.Parse((string)jsonIn.GetValue("txid"));
 					txin.PrevOut.N = (uint)jsonIn.GetValue("vout");
 				}
 				else
@@ -43,10 +43,10 @@ namespace NBitcoin.RPC
 			}
 
 			var vout = (JArray)json.GetValue("vout");
-			for(int i = 0 ; i < vout.Count ; i++)
+			for(int i = 0; i < vout.Count; i++)
 			{
 				var jsonOut = (JObject)vout[i];
-				var txout = new NBitcoin.TxOut();
+				var txout = new TxOut();
 				tx.Outputs.Add(txout);
 
 				var btc = (decimal)jsonOut.GetValue("value");
@@ -70,9 +70,9 @@ namespace NBitcoin.RPC
 			{
 				writer.WriteStartObject();
 
-				if(txin.PrevOut.Hash == new uint256(0))
+				if(txin.PrevOut.Hash == uint256.Zero)
 				{
-					WritePropertyValue(writer, "coinbase", Encoders.Hex.EncodeData(txin.ScriptSig.ToRawScript()));
+					WritePropertyValue(writer, "coinbase", Encoders.Hex.EncodeData(txin.ScriptSig.ToBytes()));
 				}
 				else
 				{
@@ -82,11 +82,11 @@ namespace NBitcoin.RPC
 					writer.WriteStartObject();
 
 					WritePropertyValue(writer, "asm", txin.ScriptSig.ToString());
-					WritePropertyValue(writer, "hex", Encoders.Hex.EncodeData(txin.ScriptSig.ToRawScript()));
+					WritePropertyValue(writer, "hex", Encoders.Hex.EncodeData(txin.ScriptSig.ToBytes()));
 
 					writer.WriteEndObject();
 				}
-				WritePropertyValue(writer, "sequence", txin.Sequence);
+				WritePropertyValue(writer, "sequence", (uint)txin.Sequence);
 				writer.WriteEndObject();
 			}
 			writer.WriteEndArray();
@@ -106,13 +106,13 @@ namespace NBitcoin.RPC
 				writer.WriteStartObject();
 
 				WritePropertyValue(writer, "asm", txout.ScriptPubKey.ToString());
-				WritePropertyValue(writer, "hex", Encoders.Hex.EncodeData(txout.ScriptPubKey.ToRawScript()));
+				WritePropertyValue(writer, "hex", Encoders.Hex.EncodeData(txout.ScriptPubKey.ToBytes()));
 
 				var destinations = new List<TxDestination>() { txout.ScriptPubKey.GetDestination() };
 				if(destinations[0] == null)
 				{
 					destinations = txout.ScriptPubKey.GetDestinationPublicKeys()
-														.Select(p => p.ID)
+														.Select(p => p.Hash)
 														.ToList<TxDestination>();
 				}
 				if(destinations.Count == 1)
@@ -121,20 +121,25 @@ namespace NBitcoin.RPC
 					WritePropertyValue(writer, "type", GetScriptType(txout.ScriptPubKey.FindTemplate()));
 					writer.WritePropertyName("addresses");
 					writer.WriteStartArray();
-					writer.WriteValue(BitcoinAddress.Create(destinations[0], Network).ToString());
+					writer.WriteValue(destinations[0].GetAddress(Network).ToString());
 					writer.WriteEndArray();
 				}
 				else
 				{
 					var multi = PayToMultiSigTemplate.Instance.ExtractScriptPubKeyParameters(txout.ScriptPubKey);
-					WritePropertyValue(writer, "reqSigs", multi.SignatureCount);
+					if(multi != null)
+						WritePropertyValue(writer, "reqSigs", multi.SignatureCount);
 					WritePropertyValue(writer, "type", GetScriptType(txout.ScriptPubKey.FindTemplate()));
-					writer.WriteStartArray();
-					foreach(var key in multi.PubKeys)
+					if(multi != null)
 					{
-						writer.WriteValue(BitcoinAddress.Create(key.ID, Network).ToString());
+						writer.WritePropertyName("addresses");
+						writer.WriteStartArray();
+						foreach(var key in multi.PubKeys)
+						{
+							writer.WriteValue(key.Hash.GetAddress(Network).ToString());
+						}
+						writer.WriteEndArray();
 					}
-					writer.WriteEndArray();
 				}
 
 				writer.WriteEndObject(); //endscript
@@ -150,7 +155,7 @@ namespace NBitcoin.RPC
 			var btc = satoshis / Money.COIN;
 			//return btc.ToString("0.###E+00", CultureInfo.InvariantCulture);
 			var result = ((double)btc).ToString(CultureInfo.InvariantCulture);
-			if(!result.Contains('.'))
+			if(!result.ToCharArray().Contains('.'))
 				result = result + ".0";
 			return result;
 		}
@@ -176,3 +181,4 @@ namespace NBitcoin.RPC
 		}
 	}
 }
+#endif

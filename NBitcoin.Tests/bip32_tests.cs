@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using NBitcoin.DataEncoders;
 using Xunit;
 
 namespace NBitcoin.Tests
@@ -81,7 +82,6 @@ namespace NBitcoin.Tests
 			 "xprvA2nrNbFZABcdryreWet9Ea4LvTJcGsqrMzxHx98MMrotbir7yrKCEXw7nadnHM8Dq38EGfSh6dqA9QWTyefMLEcBYJUuekgW4BYPJcr9E7j",
 			 0);
 
-
 		[Fact]
 		[Trait("Core", "Core")]
 		public void bip32_test1()
@@ -98,10 +98,67 @@ namespace NBitcoin.Tests
 
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
+		public void CheckBIP32Constructors()
+		{
+			var key = new ExtKey();
+			Assert.Equal(key.GetWif(Network.Main), new ExtKey(key.PrivateKey, key.ChainCode).GetWif(Network.Main));
+			Assert.Equal(key.Neuter().GetWif(Network.Main), new ExtPubKey(key.PrivateKey.PubKey, key.ChainCode).GetWif(Network.Main));
+
+			key = key.Derive(1);
+			Assert.Equal(key.GetWif(Network.Main), new ExtKey(key.PrivateKey, key.ChainCode, key.Depth, key.Fingerprint, key.Child).GetWif(Network.Main));
+			Assert.Equal(key.Neuter().GetWif(Network.Main), new ExtPubKey(key.PrivateKey.PubKey, key.ChainCode, key.Depth, key.Fingerprint, key.Child).GetWif(Network.Main));
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanRecoverExtKeyFromExtPubKeyAndOneChildExtKey()
+		{
+			ExtKey key = ExtKey.Parse("xprv9s21ZrQH143K3Z9EwCXrA5VbypnvWGiE9z22S1cLLPi7r8DVUkTabBvMjeirS8KCyppw24KoD4sFmja8UDU4VL32SBdip78LY6sz3X2GPju")
+				.Derive(1);
+			var pubkey = key.Neuter();
+			var childKey = key.Derive(1);
+
+			ExtKey recovered = childKey.GetParentExtKey(pubkey);
+			Assert.Equal(recovered.ToString(Network.Main), key.ToString(Network.Main));
+
+			childKey = key.Derive(1, true);
+			Assert.Throws<InvalidOperationException>(() => childKey.GetParentExtKey(pubkey));
+
+			childKey = key.Derive(1).Derive(1);
+			Assert.Throws<ArgumentException>(() => childKey.GetParentExtKey(pubkey));
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanRecoverExtKeyFromExtPubKeyAndOneChildExtKey2()
+		{
+			for(int i = 0; i < 255; i++)
+			{
+				ExtKey key = new ExtKey().Derive((uint)i);
+				var childKey = key.Derive((uint)i);
+				var pubKey = key.Neuter();
+				ExtKey recovered = childKey.GetParentExtKey(pubKey);
+				Assert.Equal(recovered.ToString(Network.Main), key.ToString(Network.Main));
+			}
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanRecoverExtKeyFromExtPubKeyAndSecret()
+		{
+			ExtKey key = new ExtKey().Derive(1);
+			var underlying = key.PrivateKey.GetBitcoinSecret(Network.Main);
+			var pubKey = key.Neuter().GetWif(Network.Main);
+			ExtKey key2 = new ExtKey(pubKey, underlying);
+			Assert.Equal(key.ToString(Network.Main), key2.ToString(Network.Main));
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
 		public void CanUseKeyPath()
 		{
-			var keyPath = new KeyPath("0/1/2/3");
-			Assert.Equal(keyPath.ToString(), "0/1/2/3");
+			var keyPath = KeyPath.Parse("0/1/2/3");
+			Assert.Equal("0/1/2/3", keyPath.ToString());
 			var key = new ExtKey();
 			Assert.Equal(key
 							.Derive(0)
@@ -119,6 +176,57 @@ namespace NBitcoin.Tests
 							.ToString(Network.Main), neuter.Derive(keyPath).ToString(Network.Main));
 
 			Assert.Equal(neuter.Derive(keyPath).ToString(Network.Main), key.Derive(keyPath).Neuter().ToString(Network.Main));
+
+			keyPath = new KeyPath(new uint[] { 0x8000002Cu, 1u });
+			Assert.Equal("44'/1", keyPath.ToString());
+
+			keyPath = KeyPath.Parse("44'/1");
+			Assert.False(keyPath.IsHardened);
+			Assert.True(KeyPath.Parse("44'/1'").IsHardened);
+			Assert.Equal(0x8000002Cu, keyPath[0]);
+			Assert.Equal(1u, keyPath[1]);
+
+			key = new ExtKey();
+			Assert.Equal(key.Derive(keyPath).ToString(Network.Main), key.Derive(44, true).Derive(1, false).ToString(Network.Main));
+
+			keyPath = KeyPath.Parse("");
+			keyPath = keyPath.Derive(44, true).Derive(1, false);
+			Assert.Equal("44'/1", keyPath.ToString());
+			Assert.Equal("44'/2", keyPath.Increment().ToString());
+			Assert.Equal("44'/1/2'", keyPath.Derive(1, true).Increment().ToString());
+			Assert.Equal("44'", keyPath.Parent.ToString());
+			Assert.Equal("", keyPath.Parent.Parent.ToString());
+			Assert.Null(keyPath.Parent.Parent.Parent);
+			Assert.Null(keyPath.Parent.Parent.Increment());
+			Assert.Equal(key.Derive(keyPath).ToString(Network.Main), key.Derive(44, true).Derive(1, false).ToString(Network.Main));
+
+			Assert.True(key.Derive(44, true).IsHardened);
+			Assert.False(key.Derive(44, false).IsHardened);
+
+			neuter = key.Derive(44, true).Neuter();
+			Assert.True(neuter.IsHardened);
+			neuter = key.Derive(44, false).Neuter();
+			Assert.False(neuter.IsHardened);
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanInstantiateFromRawBytes()
+		{
+			var data = new byte[] { 0x01, 0x00,  0x00, 0x80 };
+			var keyPath = KeyPath.FromBytes(data);
+			Assert.Equal("1'", keyPath.ToString());
+			AssertEx.CollectionEquals(data, keyPath.ToBytes());
+
+			data = new byte[] { 0x01, 0x00,  0x00, 0x80, 0x02, 0x00, 0x00, 0x00 };
+			keyPath = KeyPath.FromBytes(data);
+			Assert.Equal("1'/2", keyPath.ToString());
+			AssertEx.CollectionEquals(data, keyPath.ToBytes());
+
+			data = new byte[0];
+			keyPath = KeyPath.FromBytes(data);
+			Assert.Equal("", keyPath.ToString());
+			AssertEx.CollectionEquals(data, keyPath.ToBytes());
 		}
 
 		[Fact]
@@ -130,6 +238,22 @@ namespace NBitcoin.Tests
 			Assert.True(ExtKey.Parse(key.ToString(Network.Main)).ToString(Network.Main) == key.ToString(Network.Main));
 			Assert.True(ExtPubKey.Parse(pubkey.ToString(Network.Main)).ToString(Network.Main) == pubkey.ToString(Network.Main));
 		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanRecoverExtPubKeyFromHexString()
+		{
+		    var key = new ExtKey();
+		    var pubkeyBytes = key.Neuter().ToBytes();
+		    var pubkeyHexString = Encoders.Hex.EncodeData(pubkeyBytes);
+
+
+		    var pubKeyFromBytes = new ExtPubKey(pubkeyBytes);
+		    var pubKeyFromHexString = new ExtPubKey(pubkeyHexString);
+
+		    Assert.True(pubKeyFromBytes.Equals(pubKeyFromHexString));
+		}
+
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
 		public void CanCheckChildKey()
@@ -147,6 +271,10 @@ namespace NBitcoin.Tests
 			Assert.True(parent.Neuter().IsParentOf(child.Neuter()));
 			Assert.False(notchild.Neuter().IsChildOf(parent.Neuter()));
 			Assert.False(parent.Neuter().IsParentOf(notchild.Neuter()));
+
+			var keyA = parent.Neuter();
+			var keyB = new ExtPubKey(keyA.ToBytes());
+			AssertEx.CollectionEquals(keyA.ToBytes(), keyB.ToBytes());
 		}
 		private void RunTest(TestVector test)
 		{

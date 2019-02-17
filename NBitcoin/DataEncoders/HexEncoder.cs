@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace NBitcoin.DataEncoders
 {
@@ -13,88 +11,111 @@ namespace NBitcoin.DataEncoders
 			get;
 			set;
 		}
-		public override string EncodeData(byte[] data, int length)
+
+		private static readonly string[] HexTbl = Enumerable.Range(0, 256).Select(v => v.ToString("x2")).ToArray();
+
+		public override string EncodeData(byte[] data, int offset, int count)
 		{
 			if(data == null)
-				throw new ArgumentNullException("data");
-			if(length < 0)
-				length = data.Length;
+				throw new ArgumentNullException(nameof(data));
 
-			StringBuilder rv = new StringBuilder();
-			for(int i = 0 ; i < length ; i++)
+			var spaces = (Space ? Math.Max((count - 1), 0) : 0);
+
+#if !HAS_SPAN
+			int pos = 0;
+			var s = new char[2 * count + spaces];
+			for(var i = offset; i < offset + count; i++)
 			{
-				var val = data[i];
 				if(Space && i != 0)
-					rv.Append(' ');
-				rv.Append(hexDigits[val >> 4]);
-				rv.Append(hexDigits[val & 15]);
+					s[pos++] = ' ';
+				var c = HexTbl[data[i]];
+				s[pos++] = c[0];
+				s[pos++] = c[1];
 			}
-
-			return rv.ToString();
+			return new string(s);
+#else
+			return string.Create(2 * count + spaces, (offset, count, data), CreateHexString);
+#endif
 		}
+
+#if HAS_SPAN
+		void CreateHexString(Span<char> s, (int offset, int count, byte[] data) state)
+		{
+			int pos = 0;
+			for (var i = state.offset; i < state.offset + state.count; i++)
+			{
+				if (Space && i != 0)
+					s[pos++] = ' ';
+				var c = HexTbl[state.data[i]];
+				s[pos++] = c[0];
+				s[pos++] = c[1];
+			}
+		}
+#endif
+
 		public override byte[] DecodeData(string encoded)
 		{
 			if(encoded == null)
-				throw new ArgumentNullException("encoded");
+				throw new ArgumentNullException(nameof(encoded));
+			if(encoded.Length % 2 == 1)
+				throw new FormatException("Invalid Hex String");
 
-			// convert hex dump to vector
-			Queue<byte> vch = new Queue<byte>();
-
-			int i = 0;
-
-			while(true)
+			var result = new byte[encoded.Length / 2];
+			for (int i = 0, j = 0; i < encoded.Length; i += 2, j++)
 			{
-				if(i >= encoded.Length)
-					break;
-				char psz = encoded[i];
-				while(IsSpace(psz))
-				{
-					i++;
-					if(i >= encoded.Length)
-						break;
-					psz = encoded[i];
-				}
-				if(i >= encoded.Length)
-					break;
-				psz = encoded[i];
-
-				int c = IsDigit(psz);
-				i++;
-				if(i >= encoded.Length)
-					break;
-				psz = encoded[i];
-				if(c == -1)
-					break;
-				int n = (c << 4);
-				c = IsDigit(psz);
-				i++;
-				if(c == -1)
-					break;
-				n |= c;
-				vch.Enqueue((byte)n);
+				var a = IsDigit(encoded[i]);
+				var b = IsDigit(encoded[i + 1]);
+				if(a == -1 || b == -1)
+					throw new FormatException("Invalid Hex String");
+				result[j] = (byte)(((uint)a << 4) | (uint)b);
 			}
-			return vch.ToArray();
+			return result;
 		}
 
+		static HexEncoder()
+		{
+			var hexDigits = new[] { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+																				  'A', 'B', 'C', 'D', 'E', 'F' };
+			var hexValues = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+																   10, 11, 12, 13, 14, 15};
 
-		static readonly char[] hexDigits = new[] { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'A', 'B', 'C', 'D', 'E', 'F' };
-		static readonly byte[] hexValues = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 10, 11, 12, 13, 14, 15 };
+			var max = hexDigits.Max();
+			hexValueArray = new int[max + 1];
+			for(int i = 0; i < hexValueArray.Length; i++)
+			{
+				var idx = Array.IndexOf(hexDigits, (char)i);
+				var value = -1;
+				if(idx != -1)
+					value = hexValues[idx];
+				hexValueArray[i] = value;
+			}
+		}
+
+		public bool IsValid(string str)
+		{
+			return str.ToCharArray().All(c => IsDigit(c) != -1) && str.Length % 2 == 0;
+		}
+
+		static readonly int[] hexValueArray;
+
 		public static int IsDigit(char c)
 		{
-			var i = Array.IndexOf(hexDigits, c);
-			if(i == -1)
-				return -1;
-			return hexValues[i];
+			return c + 1 <= hexValueArray.Length
+				? hexValueArray[c]
+				: -1;
 		}
 
 		public static bool IsWellFormed(string str)
 		{
-			foreach(var c in str)
+			try
 			{
-				if(IsDigit(c) < 0)
-					return false;
+				Encoders.Hex.DecodeData(str);
+				return true;
 			}
-			return (str.Length > 0) && (str.Length % 2 == 0);
+			catch(FormatException)
+			{
+				return false;
+			}
 		}
 	}
 }

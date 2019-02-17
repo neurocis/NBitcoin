@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !NOSOCKET
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,6 +7,9 @@ using System.Threading.Tasks;
 
 namespace NBitcoin.Protocol
 {
+	/// <summary>
+	/// An available peer address in the bitcoin network is announce (unsolicited or after a getaddr)
+	/// </summary>
 	[Payload("addr")]
 	public class AddrPayload : Payload, IBitcoinSerializable
 	{
@@ -46,3 +50,4 @@ namespace NBitcoin.Protocol
 		}
 	}
 }
+#endif

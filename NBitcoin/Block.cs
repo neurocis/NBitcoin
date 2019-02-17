@@ -1,29 +1,134 @@
-﻿using NBitcoin.Crypto;
+﻿using NBitcoin.BouncyCastle.Math;
+using NBitcoin.Crypto;
+using NBitcoin.DataEncoders;
 using NBitcoin.RPC;
+#if !NOJSONNET
 using Newtonsoft.Json.Linq;
+#endif
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace NBitcoin
 {
-	/** Nodes collect new transactions into a block, hash them into a hash tree,
-	 * and scan through nonce values to make the block's hash satisfy proof-of-work
-	 * requirements.  When they solve the proof-of-work, they broadcast the block
-	 * to everyone and the block is added to the block chain.  The first transaction
-	 * in the block is a special one that creates a new coin owned by the creator
-	 * of the block.
-	 */
+	/// <summary>
+	/// Nodes collect new transactions into a block, hash them into a hash tree,
+	/// and scan through nonce values to make the block's hash satisfy proof-of-work
+	/// requirements.  When they solve the proof-of-work, they broadcast the block
+	/// to everyone and the block is added to the block chain.  The first transaction
+	/// in the block is a special one that creates a new coin owned by the creator
+	/// of the block.
+	/// </summary>
 	public class BlockHeader : IBitcoinSerializable
 	{
-		// header
-		const int CURRENT_VERSION = 2;
+		internal const int Size = 80;
 
-		uint256 hashPrevBlock;
+
+		public static BlockHeader Parse(string hex, Network network)
+		{
+			if(network == null)
+				throw new ArgumentNullException(nameof(network));
+			return Parse(hex, network.Consensus.ConsensusFactory);
+		}
+
+		public static BlockHeader Parse(string hex, Consensus consensus)
+		{
+			if(consensus == null)
+				throw new ArgumentNullException(nameof(consensus));
+			return Parse(hex, consensus.ConsensusFactory);
+		}
+
+		public static BlockHeader Parse(string hex, ConsensusFactory consensusFactory)
+		{
+			if(consensusFactory == null)
+				throw new ArgumentNullException(nameof(consensusFactory));
+			return new BlockHeader(Encoders.Hex.DecodeData(hex), consensusFactory);
+		}
+
+
+		[Obsolete("Use Parse(string hex, Network|Consensus|ConsensusFactory) instead")]
+		public static BlockHeader Parse(string hex)
+		{
+			return Parse(hex, Consensus.Main.ConsensusFactory);
+		}
+
+		[Obsolete("You should instantiate BlockHeader from ConsensusFactory.CreateBlockHeader")]
+		public BlockHeader()
+		{
+			SetNull();
+		}
+
+		public BlockHeader(string hex, Network network)
+			: this(hex, network?.Consensus?.ConsensusFactory ?? throw new ArgumentNullException(nameof(network)))
+		{
+
+		}
+
+		public BlockHeader(string hex, Consensus consensus)
+			: this(hex, consensus?.ConsensusFactory ?? throw new ArgumentNullException(nameof(consensus)))
+		{
+
+		}
+
+		public BlockHeader(string hex, ConsensusFactory consensusFactory)
+		{
+			if(hex == null)
+				throw new ArgumentNullException(nameof(hex));
+			if(consensusFactory == null)
+				throw new ArgumentNullException(nameof(consensusFactory));
+			BitcoinStream bs = new BitcoinStream(Encoders.Hex.DecodeData(hex))
+			{
+				ConsensusFactory = consensusFactory
+			};
+			this.ReadWrite(bs);
+		}
+
+		[Obsolete("Use new BlockHeader(string hex, Network|Consensus|ConsensusFactory) instead")]
+		public BlockHeader(string hex)
+			: this(Encoders.Hex.DecodeData(hex))
+		{
+
+		}
+
+
+		public BlockHeader(byte[] data, Network network)
+			: this(data, network?.Consensus?.ConsensusFactory ?? throw new ArgumentNullException(nameof(network)))
+		{
+
+		}
+
+		public BlockHeader(byte[] data, Consensus consensus)
+			: this(data, consensus?.ConsensusFactory ?? throw new ArgumentNullException(nameof(consensus)))
+		{
+
+		}
+
+		public BlockHeader(byte[] data, ConsensusFactory consensusFactory)
+		{
+			if(data == null)
+				throw new ArgumentNullException(nameof(data));
+			if(consensusFactory == null)
+				throw new ArgumentNullException(nameof(consensusFactory));
+			BitcoinStream bs = new BitcoinStream(data)
+			{
+				ConsensusFactory = consensusFactory
+			};
+			this.ReadWrite(bs);
+		}
+
+
+		[Obsolete("Use new BlockHeader(byte[] hex, Network|Consensus|ConsensusFactory) instead")]
+		public BlockHeader(byte[] bytes)
+		{
+			this.ReadWrite(bytes);
+		}
+
+
+		// header
+		const int CURRENT_VERSION = 3;
+
+		protected uint256 hashPrevBlock;
 
 		public uint256 HashPrevBlock
 		{
@@ -36,10 +141,10 @@ namespace NBitcoin
 				hashPrevBlock = value;
 			}
 		}
-		uint256 hashMerkleRoot;
+		protected uint256 hashMerkleRoot;
 
-		uint nTime;
-		uint nBits;
+		protected uint nTime;
+		protected uint nBits;
 
 		public Target Bits
 		{
@@ -53,7 +158,7 @@ namespace NBitcoin
 			}
 		}
 
-		int nVersion;
+		protected int nVersion;
 
 		public int Version
 		{
@@ -67,7 +172,7 @@ namespace NBitcoin
 			}
 		}
 
-		uint nNonce;
+		protected uint nNonce;
 
 		public uint Nonce
 		{
@@ -92,13 +197,7 @@ namespace NBitcoin
 			}
 		}
 
-		public BlockHeader()
-		{
-			SetNull();
-		}
-
-
-		internal void SetNull()
+		protected internal virtual void SetNull()
 		{
 			nVersion = CURRENT_VERSION;
 			hashPrevBlock = 0;
@@ -117,7 +216,7 @@ namespace NBitcoin
 		}
 		#region IBitcoinSerializable Members
 
-		public void ReadWrite(BitcoinStream stream)
+		public virtual void ReadWrite(BitcoinStream stream)
 		{
 			stream.ReadWrite(ref nVersion);
 			stream.ReadWrite(ref hashPrevBlock);
@@ -125,19 +224,70 @@ namespace NBitcoin
 			stream.ReadWrite(ref nTime);
 			stream.ReadWrite(ref nBits);
 			stream.ReadWrite(ref nNonce);
-			if(stream.NetworkFormat)
-			{
-				VarInt txCount = new VarInt(0);
-				stream.ReadWrite(ref txCount);
-			}
+
 		}
+
 
 		#endregion
 
+
+		public virtual uint256 GetPoWHash()
+		{
+			return GetHash();
+		}
+
 		public uint256 GetHash()
 		{
-			return Hashes.Hash256(this.ToBytes());
+			uint256 h = null;
+			var hashes = _Hashes;
+			if(hashes != null)
+			{
+				h = hashes[0];
+			}
+			if(h != null)
+				return h;
+
+			using(var hs = CreateHashStream())
+			{
+				var stream = new BitcoinStream(hs, true);
+				stream.SerializationTypeScope(SerializationType.Hash);
+				this.ReadWrite(stream);
+				h = hs.GetHash();
+			}
+
+			hashes = _Hashes;
+			if(hashes != null)
+			{
+				hashes[0] = h;
+			}
+			return h;
 		}
+
+		protected virtual HashStreamBase CreateHashStream()
+		{
+			return new HashStream();
+		}
+
+		[Obsolete("Call PrecomputeHash(true, true) instead")]
+		public void CacheHashes()
+		{
+			PrecomputeHash(true, true);
+		}
+
+		/// <summary>
+		/// Precompute the block header hash so that later calls to GetHash() will returns the precomputed hash
+		/// </summary>
+		/// <param name="invalidateExisting">If true, the previous precomputed hash is thrown away, else it is reused</param>
+		/// <param name="lazily">If true, the hash will be calculated and cached at the first call to GetHash(), else it will be immediately</param>
+		public void PrecomputeHash(bool invalidateExisting, bool lazily)
+		{
+			_Hashes = invalidateExisting ? new uint256[1] : _Hashes ?? new uint256[1];
+			if(!lazily && _Hashes[0] == null)
+				_Hashes[0] = GetHash();
+		}
+
+
+		uint256[] _Hashes;
 
 		public DateTimeOffset BlockTime
 		{
@@ -151,25 +301,99 @@ namespace NBitcoin
 			}
 		}
 
+		static BigInteger Pow256 = BigInteger.ValueOf(2).Pow(256);
 		public bool CheckProofOfWork()
 		{
-			// Check proof of work matches claimed amount
-			if(GetHash() > Bits.ToUInt256())
+			var bits = Bits.ToBigInteger();
+			if(bits.CompareTo(BigInteger.Zero) <= 0 || bits.CompareTo(Pow256) >= 0)
 				return false;
-			return true;
+			// Check proof of work matches claimed amount
+			return GetPoWHash() <= Bits.ToUInt256();
 		}
+
+		[Obsolete]
+		public bool CheckProofOfWork(Consensus consensus)
+		{
+			return CheckProofOfWork();
+		}
+
 
 		public override string ToString()
 		{
 			return GetHash().ToString();
 		}
+
+		/// <summary>
+		/// Set time to consensus acceptable value
+		/// </summary>
+		/// <param name="network">Network</param>
+		/// <param name="prev">previous block</param>
+		public void UpdateTime(Network network, ChainedBlock prev)
+		{
+			UpdateTime(DateTimeOffset.UtcNow, network, prev);
+		}
+
+		/// <summary>
+		/// Set time to consensus acceptable value
+		/// </summary>
+		/// <param name="consensus">Consensus</param>
+		/// <param name="prev">previous block</param>
+		public void UpdateTime(Consensus consensus, ChainedBlock prev)
+		{
+			UpdateTime(DateTimeOffset.UtcNow, consensus, prev);
+		}
+
+		/// <summary>
+		/// Set time to consensus acceptable value
+		/// </summary>
+		/// <param name="now">The expected date</param>
+		/// <param name="consensus">Consensus</param>
+		/// <param name="prev">previous block</param>		
+		public void UpdateTime(DateTimeOffset now, Consensus consensus, ChainedBlock prev)
+		{
+			var nOldTime = this.BlockTime;
+			var mtp = prev.GetMedianTimePast() + TimeSpan.FromSeconds(1);
+			var nNewTime = mtp > now ? mtp : now;
+
+			if(nOldTime < nNewTime)
+				this.BlockTime = nNewTime;
+
+			// Updating time can change work required on testnet:
+			if(consensus.PowAllowMinDifficultyBlocks)
+				Bits = GetWorkRequired(consensus, prev);
+		}
+
+		/// <summary>
+		/// Set time to consensus acceptable value
+		/// </summary>
+		/// <param name="now">The expected date</param>
+		/// <param name="network">Network</param>
+		/// <param name="prev">previous block</param>		
+		public void UpdateTime(DateTimeOffset now, Network network, ChainedBlock prev)
+		{
+			UpdateTime(now, network.Consensus, prev);
+		}
+
+		public Target GetWorkRequired(Network network, ChainedBlock prev)
+		{
+			return GetWorkRequired(network.Consensus, prev);
+		}
+
+		public Target GetWorkRequired(Consensus consensus, ChainedBlock prev)
+		{
+			return new ChainedBlock(this, null, prev).GetWorkRequired(consensus);
+		}
+
 	}
 
 
 	public class Block : IBitcoinSerializable
 	{
-		public const uint MAX_BLOCK_SIZE = 1000000;
-		BlockHeader header = new BlockHeader();
+		private BlockHeader header;
+
+		//FIXME: it needs to be changed when Gavin Andresen increase the max block size. 
+		public const uint MAX_BLOCK_SIZE = 1000 * 1000;
+
 		// network and disk
 		List<Transaction> vtx = new List<Transaction>();
 
@@ -185,31 +409,87 @@ namespace NBitcoin
 			}
 		}
 
-		// memory only
-		public List<uint256> vMerkleTree = new List<uint256>();
-
-
-
-
-		public Block()
+		public MerkleNode GetMerkleRoot()
 		{
-			SetNull();
+			return MerkleNode.GetRoot(Transactions.Select(t => t.GetHash()));
 		}
 
+		[Obsolete("Should use Block.CreateBlock(Network)")]
+		public Block() : this(Consensus.Main.ConsensusFactory.CreateBlockHeader())
+		{
+		}
+
+		public static Block CreateBlock(Network network)
+		{
+			return CreateBlock(network.Consensus.ConsensusFactory);
+		}
+		public static Block CreateBlock(ConsensusFactory consensusFactory)
+		{
+			return consensusFactory.CreateBlock();
+		}
+
+		public static Block CreateBlock(BlockHeader header, Network network)
+		{
+			return CreateBlock(header, network.Consensus.ConsensusFactory);
+		}
+		public static Block CreateBlock(BlockHeader header, ConsensusFactory consensusFactory)
+		{
+			var ms = new MemoryStream(100);
+			BitcoinStream bs = new BitcoinStream(ms, true);
+			bs.ConsensusFactory = consensusFactory;
+			bs.ReadWrite(header);
+
+			var block = consensusFactory.CreateBlock();
+			ms.Position = 0;
+			bs = new BitcoinStream(ms, false);
+			block.Header.ReadWrite(bs);
+			return block;
+		}
+
+		[Obsolete("Should use ConsensusFactories")]
 		public Block(BlockHeader blockHeader)
 		{
+			if(blockHeader == null)
+				throw new ArgumentNullException(nameof(blockHeader));
 			SetNull();
 			header = blockHeader;
 		}
 
-
-		public void ReadWrite(BitcoinStream stream)
+		[Obsolete("Should use Block.Load outside of ConsensusFactories")]
+		public Block(byte[] bytes, Network network) : this(bytes, network.Consensus.ConsensusFactory)
 		{
-			using(stream.NetworkFormatScope(false))
+
+		}
+
+		[Obsolete("Should use Block.Load outside of ConsensusFactories")]
+		public Block(byte[] bytes, Consensus consensus) : this(bytes, consensus.ConsensusFactory)
+		{
+
+		}
+
+		[Obsolete("Should use Block.Load outside of ConsensusFactories")]
+		public Block(byte[] bytes, ConsensusFactory consensusFactory)
+		{
+			BitcoinStream stream = new BitcoinStream(bytes)
+			{
+				ConsensusFactory = consensusFactory
+			};
+			ReadWrite(stream);
+		}
+
+		[Obsolete("Should use Block.Load outside of ConsensusFactories")]
+		public Block(byte[] bytes) : this(bytes, Consensus.Main.ConsensusFactory)
+		{
+		}
+
+
+		public virtual void ReadWrite(BitcoinStream stream)
+		{
+			using(stream.ConsensusFactoryScope(GetConsensusFactory()))
 			{
 				stream.ReadWrite(ref header);
+				stream.ReadWrite(ref vtx);
 			}
-			stream.ReadWrite(ref vtx);
 		}
 
 		public bool HeaderOnly
@@ -220,10 +500,21 @@ namespace NBitcoin
 			}
 		}
 
+		/// <summary>
+		/// Get the coinbase height as specified by the first tx input of this block (BIP 34)
+		/// </summary>
+		/// <returns>Null if block has been created before BIP34 got enforced, else, the height</returns>
+		public int? GetCoinbaseHeight()
+		{
+			if(Header.Version < 2 || Transactions.Count == 0 || Transactions[0].Inputs.Count == 0)
+				return null;
+			return Transactions[0].Inputs[0].ScriptSig.ToOps().FirstOrDefault()?.GetInt();
+		}
 
 		void SetNull()
 		{
-			header.SetNull();
+			if(header != null)
+				header.SetNull();
 			vtx.Clear();
 		}
 
@@ -234,87 +525,10 @@ namespace NBitcoin
 				return header;
 			}
 		}
-
-		public uint256 ComputeMerkleRoot()
-		{
-			vMerkleTree.Clear();
-			foreach(var tx in Transactions)
-				vMerkleTree.Add(tx.GetHash());
-			int j = 0;
-			for(int nSize = vtx.Count ; nSize > 1 ; nSize = (nSize + 1) / 2)
-			{
-				for(int i = 0 ; i < nSize ; i += 2)
-				{
-					int i2 = Math.Min(i + 1, nSize - 1);
-					vMerkleTree.Add(Hash(vMerkleTree[j + i],
-										 vMerkleTree[j + i2]));
-				}
-				j += nSize;
-			}
-			return (vMerkleTree.Count == 0 ? 0 : vMerkleTree.Last());
-		}
-
-		private static uint256 Hash(uint256 a, uint256 b)
-		{
-			return Hashes.Hash256(a.ToBytes().Concat(b.ToBytes()).ToArray());
-		}
-
-		public uint256 GetTxHash(int nIndex)
-		{
-			if(vMerkleTree.Count <= 0)
-				throw new InvalidOperationException("BuildMerkleTree must have been called first");
-			if(nIndex >= vtx.Count)
-				throw new InvalidOperationException("nIndex >= vtx.Length");
-			return vMerkleTree[nIndex];
-		}
-
-		public List<uint256> GetMerkleBranch(int nIndex)
-		{
-			if(vMerkleTree.Count == 0)
-				ComputeMerkleRoot();
-			List<uint256> vMerkleBranch = new List<uint256>();
-			int j = 0;
-			for(int nSize = vtx.Count ; nSize > 1 ; nSize = (nSize + 1) / 2)
-			{
-				int i = Math.Min(nIndex ^ 1, nSize - 1);
-				vMerkleBranch.Add(vMerkleTree[j + i]);
-				nIndex >>= 1;
-				j += nSize;
-			}
-			return vMerkleBranch;
-		}
-
-		public static uint256 CheckMerkleBranch(uint256 hash, List<uint256> vMerkleBranch, int nIndex)
-		{
-			if(nIndex == -1)
-				return 0;
-			foreach(var otherside in vMerkleBranch)
-			{
-				if((nIndex & 1) != 0)
-					hash = Hash(otherside, hash);
-				else
-					hash = Hash(hash, otherside);
-				nIndex >>= 1;
-			}
-			return hash;
-		}
-
-		//std::vector<uint256> GetMerkleBranch(int nIndex) const;
-		//static uint256 CheckMerkleBranch(uint256 hash, const std::vector<uint256>& vMerkleBranch, int nIndex);
-		//void print() const;
-
 		public uint256 GetHash()
 		{
 			//Block's hash is his header's hash
-			return Hashes.Hash256(header.ToBytes());
-		}
-
-		public int Length
-		{
-			get
-			{
-				return header.ToBytes().Length;
-			}
+			return header.GetHash();
 		}
 
 		public void ReadWrite(byte[] array, int startIndex)
@@ -331,17 +545,74 @@ namespace NBitcoin
 			return tx;
 		}
 
+		/// <summary>
+		/// Create a block with the specified option only. (useful for stripping data from a block)
+		/// </summary>
+		/// <param name="options">Options to keep</param>
+		/// <returns>A new block with only the options wanted</returns>
+		public Block WithOptions(TransactionOptions options)
+		{
+			if(Transactions.Count == 0)
+				return this;
+			if(options == TransactionOptions.Witness && Transactions[0].HasWitness)
+				return this;
+			if(options == TransactionOptions.None && !Transactions[0].HasWitness)
+				return this;
+			var instance = GetConsensusFactory().CreateBlock();
+			var ms = new MemoryStream();
+			var bms = new BitcoinStream(ms, true);
+			bms.TransactionOptions = options;
+			this.ReadWrite(bms);
+			ms.Position = 0;
+			bms = new BitcoinStream(ms, false);
+			bms.TransactionOptions = options;
+			instance.ReadWrite(bms);
+			return instance;
+		}
+
+		public virtual ConsensusFactory GetConsensusFactory()
+		{
+			return Consensus.Main.ConsensusFactory;
+		}
+
 		public void UpdateMerkleRoot()
 		{
-			this.Header.HashMerkleRoot = ComputeMerkleRoot();
+			this.Header.HashMerkleRoot = GetMerkleRoot().Hash;
+		}
+
+		/// <summary>
+		/// Check proof of work and merkle root
+		/// </summary>
+		/// <returns></returns>
+		public bool Check()
+		{
+			return CheckMerkleRoot() && Header.CheckProofOfWork();
+		}
+
+		/// <summary>
+		/// Check proof of work and merkle root
+		/// </summary>
+		/// <param name="consensus"></param>
+		/// <returns></returns>
+		[Obsolete("Use Check() instead")]
+		public bool Check(Consensus consensus)
+		{
+			return Check();
+		}
+
+		public bool CheckProofOfWork()
+		{
+			return Header.CheckProofOfWork();
+		}
+		[Obsolete("Use CheckProofOfWork() instead")]
+		public bool CheckProofOfWork(Consensus consensus)
+		{
+			return CheckProofOfWork();
 		}
 
 		public bool CheckMerkleRoot()
 		{
-			ComputeMerkleRoot();
-			if(vMerkleTree.Count == 0)
-				return false;
-			return Header.HashMerkleRoot == vMerkleTree.Last();
+			return Header.HashMerkleRoot == GetMerkleRoot().Hash;
 		}
 
 		public Block CreateNextBlockWithCoinbase(BitcoinAddress address, int height)
@@ -350,15 +621,14 @@ namespace NBitcoin
 		}
 		public Block CreateNextBlockWithCoinbase(BitcoinAddress address, int height, DateTimeOffset now)
 		{
-			Block block = new Block();
+			if(address == null)
+				throw new ArgumentNullException(nameof(address));
+			Block block = GetConsensusFactory().CreateBlock();
 			block.Header.Nonce = RandomUtils.GetUInt32();
 			block.Header.HashPrevBlock = this.GetHash();
 			block.Header.BlockTime = now;
-			var tx = block.AddTransaction(new Transaction());
-			tx.AddInput(new TxIn()
-			{
-				ScriptSig = new Script(Op.GetPushOp(RandomUtils.GetBytes(30)))
-			});
+			var tx = block.AddTransaction(GetConsensusFactory().CreateTransaction());
+			tx.Inputs.Add(scriptSig: new Script(Op.GetPushOp(RandomUtils.GetBytes(30))));
 			tx.Outputs.Add(new TxOut(address.Network.GetReward(height), address)
 			{
 				Value = address.Network.GetReward(height)
@@ -366,21 +636,19 @@ namespace NBitcoin
 			return block;
 		}
 
-		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value)
+		public int GetWeight()
 		{
-			return CreateNextBlockWithCoinbase(pubkey, value, DateTimeOffset.UtcNow);
+			return this.GetSerializedSize(TransactionOptions.None) * 3 + this.GetSerializedSize(TransactionOptions.All);
 		}
-		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value, DateTimeOffset now)
+
+		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value, DateTimeOffset now, ConsensusFactory consensusFactory)
 		{
-			Block block = new Block();
+			Block block = consensusFactory.CreateBlock();
 			block.Header.Nonce = RandomUtils.GetUInt32();
 			block.Header.HashPrevBlock = this.GetHash();
 			block.Header.BlockTime = now;
-			var tx = block.AddTransaction(new Transaction());
-			tx.AddInput(new TxIn()
-			{
-				ScriptSig = new Script(Op.GetPushOp(RandomUtils.GetBytes(30)))
-			});
+			var tx = block.AddTransaction(consensusFactory.CreateTransaction());
+			tx.Inputs.Add(scriptSig: new Script(Op.GetPushOp(RandomUtils.GetBytes(30))));
 			tx.Outputs.Add(new TxOut()
 			{
 				Value = value,
@@ -389,7 +657,26 @@ namespace NBitcoin
 			return block;
 		}
 
-		public static Block Parse(string json)
+		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value, ConsensusFactory consensusFactory)
+		{
+			return CreateNextBlockWithCoinbase(pubkey, value, DateTimeOffset.UtcNow, consensusFactory);
+		}
+
+		[Obsolete("Use CreateNextBlockWithCoinbase with consensusFactory instead")]
+		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value)
+		{
+			return CreateNextBlockWithCoinbase(pubkey, value, DateTimeOffset.UtcNow, Consensus.Main.ConsensusFactory);
+		}
+
+		[Obsolete("Use CreateNextBlockWithCoinbase with consensusFactory instead")]
+		public Block CreateNextBlockWithCoinbase(PubKey pubkey, Money value, DateTimeOffset now)
+		{
+			return CreateNextBlockWithCoinbase(pubkey, value, now, Consensus.Main.ConsensusFactory);
+		}
+
+#if !NOJSONNET
+		[Obsolete("Always use an hex encoded version of the block instead")]
+		public static Block ParseJson(string json)
 		{
 			var formatter = new BlockExplorerFormatter();
 			var block = JObject.Parse(json);
@@ -399,13 +686,81 @@ namespace NBitcoin
 			blk.Header.BlockTime = Utils.UnixTimeToDateTime((uint)block["time"]);
 			blk.Header.Nonce = (uint)block["nonce"];
 			blk.Header.Version = (int)block["ver"];
-			blk.Header.HashPrevBlock = new uint256((string)block["prev_block"]);
-			blk.Header.HashMerkleRoot = new uint256((string)block["mrkl_root"]);
+			blk.Header.HashPrevBlock = uint256.Parse((string)block["prev_block"]);
+			blk.Header.HashMerkleRoot = uint256.Parse((string)block["mrkl_root"]);
 			foreach(var tx in txs)
 			{
 				blk.AddTransaction(formatter.Parse((JObject)tx));
 			}
 			return blk;
+		}
+#endif
+		public static Block Parse(string hex, Network network)
+		{
+			if(network == null)
+				throw new ArgumentNullException(nameof(network));
+			return Parse(hex, network.Consensus.ConsensusFactory);
+		}
+
+		public static Block Parse(string hex, Consensus consensus)
+		{
+			if(consensus == null)
+				throw new ArgumentNullException(nameof(consensus));
+			return Parse(hex, consensus.ConsensusFactory);
+		}
+
+		public static Block Parse(string hex, ConsensusFactory consensusFactory)
+		{
+			if(hex == null)
+				throw new ArgumentNullException(nameof(hex));
+			if(consensusFactory == null)
+				throw new ArgumentNullException(nameof(consensusFactory));
+			var block = consensusFactory.CreateBlock();
+			block.ReadWrite(Encoders.Hex.DecodeData(hex), consensusFactory);
+			return block;
+		}
+
+		public static Block Load(byte[] hex, Network network)
+		{
+			if(hex == null)
+				throw new ArgumentNullException(nameof(hex));
+			if(network == null)
+				throw new ArgumentNullException(nameof(network));
+			return Load(hex, network.Consensus.ConsensusFactory);
+		}
+		public static Block Load(byte[] hex, Consensus consensus)
+		{
+			if(hex == null)
+				throw new ArgumentNullException(nameof(hex));
+			if(consensus == null)
+				throw new ArgumentNullException(nameof(consensus));
+			return Load(hex, consensus.ConsensusFactory);
+		}
+		public static Block Load(byte[] hex, ConsensusFactory consensusFactory)
+		{
+			if(hex == null)
+				throw new ArgumentNullException(nameof(hex));
+			if(consensusFactory == null)
+				throw new ArgumentNullException(nameof(consensusFactory));
+			var block = consensusFactory.CreateBlock();
+			block.ReadWrite(hex, consensusFactory);
+			return block;
+		}
+
+		[Obsolete("Use Parse(byte[], Network|Consensus|ConsensusFactory)")]
+		public static Block Parse(string hex)
+		{
+			return Parse(hex, Consensus.Main.ConsensusFactory);
+		}
+
+		public MerkleBlock Filter(params uint256[] txIds)
+		{
+			return new MerkleBlock(this, txIds);
+		}
+
+		public MerkleBlock Filter(BloomFilter filter)
+		{
+			return new MerkleBlock(this, filter);
 		}
 	}
 }

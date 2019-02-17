@@ -6,19 +6,30 @@ using System.Threading.Tasks;
 
 namespace NBitcoin.Protocol
 {
+	/// <summary>
+	/// Ask for the block hashes (inv) that happened since BlockLocators
+	/// </summary>
 	[Payload("getblocks")]
 	public class GetBlocksPayload : Payload
 	{
-		uint version = (uint)ProtocolVersion.PROTOCOL_VERSION;
-		public ProtocolVersion Version
+		public GetBlocksPayload(BlockLocator locator)
+		{
+			BlockLocators = locator;
+		}
+		public GetBlocksPayload()
+		{
+
+		}
+		uint version = (uint)Network.Main.MaxP2PVersion;
+		public uint Version
 		{
 			get
 			{
-				return (ProtocolVersion)version;
+				return version;
 			}
 			set
 			{
-				version = (uint)value;
+				version = value;
 			}
 		}
 
@@ -35,7 +46,7 @@ namespace NBitcoin.Protocol
 				blockLocators = value;
 			}
 		}
-		uint256 _HashStop = new uint256(0);
+		uint256 _HashStop = uint256.Zero;
 		public uint256 HashStop
 		{
 			get

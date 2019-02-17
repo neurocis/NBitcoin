@@ -1,4 +1,5 @@
-﻿using NBitcoin.RPC;
+﻿#if !NOJSONNET
+using NBitcoin.RPC;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,21 +14,27 @@ namespace NBitcoin
 		public RPCTransactionRepository(RPCClient client)
 		{
 			if(client == null)
-				throw new ArgumentNullException("client");
+				throw new ArgumentNullException(nameof(client));
 			_Client = client;
 		}
-		#region ITransactionRepository Members
+#region ITransactionRepository Members
 
-		public Transaction Get(uint256 txId)
+		public Task<Transaction> GetAsync(uint256 txId)
 		{
-			return _Client.GetRawTransaction(txId, false);
+			return _Client.GetRawTransactionAsync(txId, false);
 		}
 
-		public void Put(uint256 txId, Transaction tx)
+		public Task BroadcastAsync(Transaction tx)
 		{
-			
+			return _Client.SendRawTransactionAsync(tx);
 		}
 
-		#endregion
+		public Task PutAsync(uint256 txId, Transaction tx)
+		{
+			return Task.FromResult(false);
+		}
+
+#endregion
 	}
 }
+#endif
